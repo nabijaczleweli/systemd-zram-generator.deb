@@ -1,0 +1,5 @@
+systemd-zram-generator (0.1.2-1) unstable; urgency=medium
+
+  * Initial release, upstream version 0.1.2
+
+ -- nabijaczleweli <nabijaczleweli@gmail.com>  Thu, 13 Feb 2020 21:42:12 +0100
