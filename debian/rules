@@ -15,6 +15,7 @@ override_dh_auto_install:
 	cp target/release/zram-generator $(OUTDIR)usr/lib/systemd/system-generators/systemd-zram-generator
 	sed 's/@VERSION@/$(VERSION)/g' debian/systemd-zram-generator.8 | gzip -9 > $(OUTDIR)usr/share/man/man8/systemd-zram-generator.8.gz
 	cat README.md | gzip -9 > $(OUTDIR)usr/share/doc/systemd-zram-generator/README.md.gz
+	cp TODO $(OUTDIR)usr/share/doc/systemd-zram-generator/
 	cp debian/zram-generator.conf $(OUTDIR)etc/systemd/
 	echo 'zram' > $(OUTDIR)usr/lib/modules-load.d/systemd-zram-generator.conf
 
