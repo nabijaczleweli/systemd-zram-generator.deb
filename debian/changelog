@@ -1,3 +1,12 @@
+systemd-zram-generator (0.1.2~ng3.callback-generator-plus-features-1) unstable; urgency=medium
+
+  * max-zram-size to cap fraxion-based device size
+  * Rename memory-limit to host-memory-limit
+  * Support optional compression-algorithm key and set it when specified,
+    closing https://github.com/systemd/zram-generator/issues/13
+
+ -- nabijaczleweli <nabijaczleweli@gmail.com>  Fri, 14 Feb 2020 03:49:30 +0100
+
 systemd-zram-generator (0.1.2~ng2.callback-generator-1) unstable; urgency=medium
 
   * Do device setup in the generator
