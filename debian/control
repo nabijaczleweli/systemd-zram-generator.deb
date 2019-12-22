@@ -16,7 +16,8 @@ Architecture: linux-any
 Section: admin
 Priority: optional
 Recommends: systemd
-Depends: libc6
+Depends: ${misc:Depends},
+         ${shlibs:Depends},
 Description: swap-create@.service and swap unit generator for zram devices
  Provides generator to manage zram swap based on the config file at
  /etc/systemd/zram-generator.conf
