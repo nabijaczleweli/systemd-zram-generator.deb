@@ -1,3 +1,10 @@
+systemd-zram-generator (0.1.2+ng3~callback-generator-plus-features-3) unstable; urgency=medium
+
+  * versioning scheme change
+  * package license metadata fixed
+
+ -- nabijaczleweli <nabijaczleweli@gmail.com>  Sun, 16 Feb 2020 16:49:31 +0100
+
 systemd-zram-generator (0.1.2~ng3.callback-generator-plus-features-2) unstable; urgency=medium
 
   * relwithdebinfo builds, -dbgsym packages should now make sense
