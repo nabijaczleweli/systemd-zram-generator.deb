@@ -1,3 +1,10 @@
+systemd-zram-generator (0.1.2+ng3~callback-generator-plus-features-4) unstable; urgency=medium
+
+  * Fixed lintian package-uses-debhelper-but-lacks-build-depends
+              and maintainer-also-in-uploaders
+
+ -- nabijaczleweli <nabijaczleweli@gmail.com>  Tue, 18 Feb 2020 18:51:52 +0100
+
 systemd-zram-generator (0.1.2+ng3~callback-generator-plus-features-3) unstable; urgency=medium
 
   * versioning scheme change

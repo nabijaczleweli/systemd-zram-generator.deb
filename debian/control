@@ -2,14 +2,14 @@ Source: systemd-zram-generator
 Section: admin
 Priority: optional
 Maintainer: nabijaczleweli <nabijaczleweli@gmail.com>
-Uploaders: nabijaczleweli <nabijaczleweli@gmail.com>
 Standards-Version: 4.5.0
 Rules-Requires-Root: no
 Vcs-Git: https://github.com/nabijaczleweli/systemd-zram-generator.deb.git
 Vcs-Browser: https://github.com/nabijaczleweli/systemd-zram-generator.deb
 Homepage: https://github.com/systemd/zram-generator
 Tag: implemented-in::rust, role::program
-#Build-Depends: rustc?
+Build-Depends: debhelper,
+#              rustc?
 
 Package: systemd-zram-generator
 Architecture: linux-any
