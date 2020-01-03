@@ -1,3 +1,10 @@
+systemd-zram-generator (0.1.2+ng3~callback-generator-plus-features-5) unstable; urgency=medium
+
+  * Use debhelper overrides correctly
+  * Install config file via ucf
+
+ -- nabijaczleweli <nabijaczleweli@gmail.com>  Thu, 20 Feb 2020 02:23:33 +0100
+
 systemd-zram-generator (0.1.2+ng3~callback-generator-plus-features-4) unstable; urgency=medium
 
   * Fixed lintian package-uses-debhelper-but-lacks-build-depends
