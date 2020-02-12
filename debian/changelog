@@ -1,3 +1,13 @@
+systemd-zram (0.1.2+ng3~callback-generator-plus-features-6) unstable; urgency=medium
+
+  * Rename to systemd-zram, for consistency with other generator packages
+  * Fix most evil-mode lintian warnings, notably:
+    + debian-watch-file-is-missing;
+    + package-uses-old-debhelper-compat-version, by bumping debhelper compat
+      level to 12;
+
+ -- nabijaczleweli <nabijaczleweli@gmail.com>  Fri, 28 Feb 2020 15:50:42 +0100
+
 systemd-zram-generator (0.1.2+ng3~callback-generator-plus-features-5) unstable; urgency=medium
 
   * Use debhelper overrides correctly
