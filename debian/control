@@ -1,4 +1,4 @@
-Source: systemd-zram-generator
+Source: systemd-zram
 Section: admin
 Priority: optional
 Maintainer: nabijaczleweli <nabijaczleweli@gmail.com>
@@ -9,18 +9,28 @@ Vcs-Browser: https://github.com/nabijaczleweli/systemd-zram-generator.deb
 Homepage: https://github.com/systemd/zram-generator
 Tag: implemented-in::rust, role::program
 Build-Depends: debhelper,
+               debhelper-compat (= 12),
 #              rustc?
 
-Package: systemd-zram-generator
+Package: systemd-zram
 Architecture: linux-any
-Section: admin
-Priority: optional
 Recommends: systemd
 Depends: ${misc:Depends},
          ${shlibs:Depends},
+Replaces: systemd-zram-generator (<< 0.1.2+ng3~callback-generator-plus-features-6~)
+Breaks: systemd-zram-generator (<< 0.1.2+ng3~callback-generator-plus-features-6~)
 Description: swap-create@.service and swap unit generator for zram devices
  Provides generator to manage zram swap based on the config file at
  /etc/systemd/zram-generator.conf
  .
  The distribution default is to provide no zram devices,
  those will have to be configured manually by the administrator
+
+Package: systemd-zram-generator
+Section: oldlibs
+Architecture: all
+Depends: systemd-zram,
+         ${misc:Depends},
+         ${shlibs:Depends},
+Description: transitional package
+ This is a transitional package. It can safely be removed.
