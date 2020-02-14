@@ -6,7 +6,9 @@ use crate::ResultExt;
 use failure::Error;
 use ini::ini::{Ini, Properties as IniProperties, SectionIntoIter};
 use std::borrow::Cow;
+use std::cmp;
 use std::env;
+use std::fmt;
 use std::fs;
 use std::io::{prelude::*, BufReader};
 use std::iter::FromIterator;
@@ -15,8 +17,10 @@ use std::path::{self, Path, PathBuf};
 
 pub struct Device {
     pub name: String,
-    pub memory_limit_mb: u64,
+    pub host_memory_limit_mb: Option<u64>,
     pub zram_fraction: f64,
+    pub max_zram_size_mb: Option<u64>,
+    pub compression_algorithm: Option<String>,
     pub disksize: u64,
 }
 
@@ -24,10 +28,38 @@ impl Device {
     fn new(name: String) -> Device {
         Device {
             name,
-            memory_limit_mb: 2 * 1024,
+            host_memory_limit_mb: Some(2 * 1024),
             zram_fraction: 0.25,
+            max_zram_size_mb: Some(4 * 1024),
+            compression_algorithm: None,
             disksize: 0,
         }
+    }
+
+    fn write_optional_mb(f: &mut fmt::Formatter<'_>, val: Option<u64>) -> fmt::Result {
+        match val {
+            Some(val) => {
+                write!(f, "{}", val)?;
+                f.write_str("MB")?;
+            }
+            None => f.write_str("<none>")?,
+        }
+        Ok(())
+    }
+}
+
+impl fmt::Display for Device {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}: host-memory-limit=", self.name)?;
+        Device::write_optional_mb(f, self.host_memory_limit_mb)?;
+        write!(f, " zram-fraction={} max-zram-size=", self.zram_fraction)?;
+        Device::write_optional_mb(f, self.max_zram_size_mb)?;
+        f.write_str(" compression-algorithm=")?;
+        match self.compression_algorithm.as_ref() {
+            Some(alg) => f.write_str(alg)?,
+            None => f.write_str("<default>")?,
+        }
+        Ok(())
     }
 }
 
@@ -91,7 +123,7 @@ impl Config {
     fn read_device(root: &str, name: &str) -> Result<Option<Device>, Error> {
         match Config::read_devices(root)?.find(|(section_name, _)| section_name.as_ref().map(String::as_str) == Some(name)) {
             Some((section_name, section)) => {
-                let memtotal_mb = get_total_memory_kb(&root)? as f64 / 1024.;
+                let memtotal_mb = get_total_memory_kb(root)? as f64 / 1024.;
 
                 Config::parse_device(section_name, section, memtotal_mb)
             }
@@ -100,7 +132,7 @@ impl Config {
     }
 
     fn read_all_devices(root: &str) -> Result<Vec<Device>, Error> {
-        let memtotal_mb = get_total_memory_kb(&root)? as f64 / 1024.;
+        let memtotal_mb = get_total_memory_kb(root)? as f64 / 1024.;
 
         Result::from_iter(Config::read_devices(root)?.map(|(sn, s)| Config::parse_device(sn, s, memtotal_mb)).map(Result::transpose).flatten())
     }
@@ -115,7 +147,15 @@ impl Config {
         Ok(Ini::load_from_file(&path).with_path(&path)?.into_iter())
     }
 
-    fn parse_device(section_name: Option<String>, section: IniProperties, memtotal_mb: f64) -> Result<Option<Device>, Error> {
+    fn parse_optional_size(val: &str) -> Result<Option<u64>, Error> {
+        Ok(if val == "none" {
+            None
+        } else {
+            Some(val.parse().map_err(|e| format_err!("Failed to parse host-memory-limit \"{}\": {}", val, e))?)
+        })
+    }
+
+    fn parse_device(section_name: Option<String>, mut section: IniProperties, memtotal_mb: f64) -> Result<Option<Device>, Error> {
         let section_name = section_name.map(Cow::Owned).unwrap_or(Cow::Borrowed("(no title)"));
 
         if !section_name.starts_with("zram") {
@@ -125,13 +165,8 @@ impl Config {
 
         let mut dev = Device::new(section_name.into_owned());
 
-        if let Some(val) = section.get("memory-limit") {
-            if val == "none" {
-                dev.memory_limit_mb = u64::max_value();
-            } else {
-                dev.memory_limit_mb = val.parse()
-                    .map_err(|e| format_err!("Failed to parse memory-limit \"{}\": {}", val, e))?;
-            }
+        if let Some(val) = section.get("host-memory-limit") {
+            dev.host_memory_limit_mb = Config::parse_optional_size(val)?;
         }
 
         if let Some(val) = section.get("zram-fraction") {
@@ -139,18 +174,29 @@ impl Config {
                 .map_err(|e| format_err!("Failed to parse zram-fraction \"{}\": {}", val, e))?;
         }
 
-        println!("Found configuration for {}: memory-limit={}MB zram-fraction={}",
-                 dev.name, dev.memory_limit_mb, dev.zram_fraction);
+        if let Some(val) = section.get("max-zram-size") {
+            dev.max_zram_size_mb = Config::parse_optional_size(val)?;
+        }
 
-        if memtotal_mb > dev.memory_limit_mb as f64 {
-            println!("{}: system has too much memory ({:.1}MB), limit is {}MB, ignoring.",
-                     dev.name,
-                     memtotal_mb,
-                     dev.memory_limit_mb);
-            Ok(None)
-        } else {
-            dev.disksize = (dev.zram_fraction * memtotal_mb) as u64 * 1024 * 1024;
-            Ok(Some(dev))
+        if let Some((_, val)) = section.remove_entry("compression-algorithm") {
+            dev.compression_algorithm = Some(val);
+        }
+
+        println!("Found configuration for {}", dev);
+
+        match dev.host_memory_limit_mb {
+            Some(limit) if memtotal_mb > limit as f64 => {
+                println!("{}: system has too much memory ({:.1}MB), limit is {}MB, ignoring.",
+                         dev.name, memtotal_mb, limit);
+                Ok(None)
+            }
+            _ => {
+                dev.disksize = (dev.zram_fraction * memtotal_mb) as u64 * 1024 * 1024;
+                if let Some(max_mb) = dev.max_zram_size_mb {
+                    dev.disksize = cmp::min(dev.disksize, max_mb * 1024 * 1024);
+                }
+                Ok(Some(dev))
+            }
         }
     }
 
