@@ -1,3 +1,14 @@
+systemd-zram-generator (0.1.2~ng1.priority-1) unstable; urgency=medium
+
+  * $ZRAM_GENERATOR_ROOT for testing
+  * priority setting on the generated swaps – now 100 like the zram-tools
+    package – closing https://github.com/systemd/zram-generator/issues/8
+  * code cleanliness, it's more idiomatic now
+  * a fix to an error output format string
+  * README included in the package
+
+ -- nabijaczleweli <nabijaczleweli@gmail.com>  Thu, 14 Feb 2020 01:52:32 +0100
+
 systemd-zram-generator (0.1.2-1) unstable; urgency=medium
 
   * Initial release, upstream version 0.1.2
