@@ -1,3 +1,16 @@
+systemd-zram (0.1.2-2) stable; urgency=medium
+
+  [Backport from sid @ 0.1.2+ng3_callback-generator-plus-features-6]
+  * README and TODO included in the package
+  * relwithdebinfo builds, -dbgsym packages should now make sense
+  * package license metadata fixed
+  * Use debhelper overrides correctly
+  * Install config file via ucf
+  * Rename to systemd-zram, for consistency with other generator packages
+  * Fix most evil-mode lintian warnings
+
+ -- nabijaczleweli <nabijaczleweli@gmail.com>  Fri, 28 Feb 2020 16:23:22 +0100
+
 systemd-zram-generator (0.1.2-1) unstable; urgency=medium
 
   * Initial release, upstream version 0.1.2
