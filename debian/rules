@@ -3,19 +3,21 @@
 
 CARGO ?= cargo
 
-OUTDIR = $(CURDIR)/debian/systemd-zram-generator/
+OUTDIR = $(CURDIR)/debian/systemd-zram/
 VERSION = $(shell awk '/^version/ {print $$3}' Cargo.toml | sed 's/"//g')
 
 
 override_dh_auto_build:
-	$(CARGO) build --release
+	sed -i 's/@VERSION@/$(VERSION)/g' debian/systemd-zram-generator.8
+	RUSTFLAGS=-g $(CARGO) build --release
 
 override_dh_auto_install:
-	mkdir -p $(OUTDIR)usr/lib/systemd/system-generators $(OUTDIR)usr/share/man/man8 $(OUTDIR)etc/systemd $(OUTDIR)usr/lib/modules-load.d
+	mkdir -p $(OUTDIR)usr/lib/systemd/system-generators $(OUTDIR)usr/share/systemd-zram
 	cp target/release/zram-generator $(OUTDIR)usr/lib/systemd/system-generators/systemd-zram-generator
-	sed 's/@VERSION@/$(VERSION)/g' debian/systemd-zram-generator.8 | gzip -9 > $(OUTDIR)usr/share/man/man8/systemd-zram-generator.8.gz
-	cp debian/zram-generator.conf $(OUTDIR)etc/systemd/
-	echo 'zram' > $(OUTDIR)usr/lib/modules-load.d/systemd-zram-generator.conf
+	cp debian/zram-generator.conf    $(OUTDIR)usr/share/systemd-zram/
+
+override_dh_installdocs:
+	dh_installdocs TODO README.md
 
 %:
 	dh $@
