@@ -31,6 +31,5 @@ Section: oldlibs
 Architecture: all
 Depends: systemd-zram,
          ${misc:Depends},
-         ${shlibs:Depends},
 Description: transitional package
  This is a transitional package. It can safely be removed.
