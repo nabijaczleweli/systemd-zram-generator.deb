@@ -10,7 +10,7 @@ Homepage: https://github.com/systemd/zram-generator
 Tag: implemented-in::rust, role::program
 Build-Depends: debhelper,
                debhelper-compat (= 12),
-#              rustc?
+               cargo,
 
 Package: systemd-zram
 Architecture: linux-any
@@ -31,6 +31,5 @@ Section: oldlibs
 Architecture: all
 Depends: systemd-zram,
          ${misc:Depends},
-         ${shlibs:Depends},
 Description: transitional package
  This is a transitional package. It can safely be removed.
