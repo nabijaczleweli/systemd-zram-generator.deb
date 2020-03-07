@@ -8,8 +8,13 @@ VERSION = $(shell awk '/^version/ {print $$3}' Cargo.toml | sed 's/"//g')
 
 
 override_dh_auto_build:
-	sed -i 's/@VERSION@/$(VERSION)/g' debian/systemd-zram-generator.8
+	mkdir -p target
+	sed 's/@VERSION@/$(VERSION)/g' debian/systemd-zram-generator.8 > target/systemd-zram-generator.8
 	RUSTFLAGS=-g $(CARGO) build --release
+	mv target/release/zram-generator target/release/systemd-zram-generator
+
+override_dh_auto_clean:
+	rm -rf target/ Cargo.lock
 
 override_dh_installdocs:
 	dh_installdocs TODO README.md
