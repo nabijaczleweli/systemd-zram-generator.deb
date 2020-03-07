@@ -11,11 +11,6 @@ override_dh_auto_build:
 	sed -i 's/@VERSION@/$(VERSION)/g' debian/systemd-zram-generator.8
 	RUSTFLAGS=-g $(CARGO) build --release
 
-override_dh_auto_install:
-	mkdir -p $(OUTDIR)usr/lib/systemd/system-generators $(OUTDIR)usr/share/systemd-zram
-	cp target/release/zram-generator $(OUTDIR)usr/lib/systemd/system-generators/systemd-zram-generator
-	cp debian/zram-generator.conf    $(OUTDIR)usr/share/systemd-zram/
-
 override_dh_installdocs:
 	dh_installdocs TODO README.md
 
