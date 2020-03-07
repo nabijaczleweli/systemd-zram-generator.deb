@@ -1,3 +1,13 @@
+systemd-zram (0.1.2-3) stable; urgency=medium
+
+  [Backport from sid @ 0.1.2+ng3_callback-generator-plus-features-7]
+  * Add proper d/rules build target
+  * Specify cargo dep, making this build in a clean sid chroot
+  * Use .install file for installation
+  * Remove shlibs spec from transitional package
+
+ -- nabijaczleweli <nabijaczleweli@gmail.com>  Sat, 07 Mar 2020 21:45:29 +0100
+
 systemd-zram (0.1.2-2) stable; urgency=medium
 
   [Backport from sid @ 0.1.2+ng3_callback-generator-plus-features-6]
