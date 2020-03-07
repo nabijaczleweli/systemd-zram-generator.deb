@@ -1,3 +1,12 @@
+systemd-zram (0.1.2+ng3~callback-generator-plus-features-7) unstable; urgency=medium
+
+  * Specify cargo dep, making this build in a clean sid chroot
+  * Use .install file for installation
+  * Add proper d/rules build target
+  * Remove ${shlibs:Depends} spec from transitional package
+
+ -- nabijaczleweli <nabijaczleweli@gmail.com>  Sat, 07 Mar 2020 21:36:32 +0100
+
 systemd-zram (0.1.2+ng3~callback-generator-plus-features-6) unstable; urgency=medium
 
   * Rename to systemd-zram, for consistency with other generator packages
