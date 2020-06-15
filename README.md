@@ -22,7 +22,20 @@ This program serves two purposes:
 2. Once we figure out all the details, it should be useful as an
    example of a systemd generator in rust.
 
+### Installation
+
+Executing `make install` will create the following things:
+* Generator binary installed as `/usr/lib/systemd/system-generators/zram-generator`
+* `units/swap-create@.service` copied into `/usr/lib/systemd/system/`
+* `zram-generator.conf.example` copied into `/usr/share/doc/zram-generator/`
+You need though create your own config file at `/etc/systemd/zram-generator.conf`, customising it to your liking.
+
 ### Testing
+
+The tests require either the `zram` module to be loaded, or root to run `modprobe zram`.
 
 Set the `ZRAM_GENERATOR_ROOT` environment variable to use that
 instead of `/` as root.
+
+The "{generator}" template in `units/swap-create@.service.d/binary-location.conf`
+can be substituted for a non-standard location of the binary for testing.

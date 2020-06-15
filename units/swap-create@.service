@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: MIT
+
+[Unit]
+Description=Create swap on /dev/%i
+After=dev-%i.device
+DefaultDependencies=false
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/lib/systemd/system-generators/zram-generator --setup-device '%i'
