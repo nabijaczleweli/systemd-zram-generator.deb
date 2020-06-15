@@ -7,7 +7,6 @@ Rules-Requires-Root: no
 Vcs-Git: https://github.com/nabijaczleweli/systemd-zram-generator.deb.git
 Vcs-Browser: https://github.com/nabijaczleweli/systemd-zram-generator.deb
 Homepage: https://github.com/systemd/zram-generator
-Tag: implemented-in::rust, role::program
 Build-Depends: debhelper,
                debhelper-compat (= 12),
                cargo,
@@ -17,6 +16,7 @@ Architecture: linux-any
 Recommends: systemd
 Depends: ${misc:Depends},
          ${shlibs:Depends},
+Tag: implemented-in::rust, role::program
 Replaces: systemd-zram-generator (<< 0.1.2+ng3~callback-generator-plus-features-6~)
 Breaks: systemd-zram-generator (<< 0.1.2+ng3~callback-generator-plus-features-6~)
 Description: swap-create@.service and swap unit generator for zram devices

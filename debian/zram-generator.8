@@ -1,5 +1,5 @@
 '\" t
-.TH "SYSTEMD\-ZRAM\-GENERATOR" "8" "" "systemd-zram-generator @VERSION@" "systemd-zram-generator"
+.TH "ZRAM\-GENERATOR" "8" "" "zram-generator @VERSION@" "zram-generator"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -20,17 +20,17 @@
 .\" * MAIN CONTENT STARTS HERE *
 .\" -----------------------------------------------------------------
 .SH "NAME"
-systemd-zram-generator \- Generate create-swap@.service and dev-zram*.swap units specified in the configuration file\&.
+zram-generator \- Generate create-swap@.service and dev-zram*.swap units specified in the configuration file\&.
 .SH "SYNOPSIS"
 .PP
-/lib/systemd/system\-generators/systemd\-zram\-generator
+/usr/lib/systemd/system\-generators/zram\-generator
 .SH "DESCRIPTION"
 .PP
-systemd\-zram\-generator
+zram\-generator
 is a generator that creates create-swap@.service and dev-zram*.swap units specified in \fB/etc/systemd/zram-generator.conf\fR.
 Consult that file for information regarding both the format and available configuration.
 .PP
-systemd\-zram\-generator
+zram\-generator
 implements
 \fBsystemd.generator\fR(7)\&.
 .SH "SEE ALSO"

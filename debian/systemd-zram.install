@@ -1,2 +1,2 @@
-debian/zram-generator.conf             /usr/share/systemd-zram/
-target/release/systemd-zram-generator  /usr/lib/systemd/system-generators/
+debian/zram-generator.conf     /usr/share/systemd-zram/
+target/release/zram-generator  /usr/lib/systemd/system-generators/
