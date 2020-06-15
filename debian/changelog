@@ -1,3 +1,14 @@
+systemd-zram (0.1.2+ng4~cooper-1) unstable; urgency=medium
+
+  * New upstream version 0.1.2+ng4~cooper
+  * Drop patches, applied upstream
+  * Rename binary to zram-generator
+  * Use upstream installation script
+  * Fix maintainer metadata
+  * Only use thin LTO, since full LTO+debuginfo breaks dwz
+
+ -- наб <nabijaczleweli@gmail.com>  Mon, 15 Jun 2020 18:07:15 +0200
+
 systemd-zram (0.1.2+ng3~callback-generator-plus-features-7) unstable; urgency=medium
 
   * Specify cargo dep, making this build in a clean sid chroot
