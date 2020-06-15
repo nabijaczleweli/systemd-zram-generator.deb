@@ -1,51 +1,57 @@
 /* SPDX-License-Identifier: MIT */
 
-#[macro_use]
-extern crate failure;
-extern crate ini;
-
 mod config;
 mod generator;
 mod setup;
 
-use self::config::Config;
-use std::fmt;
-use std::path::Path;
-use std::result;
+use anyhow::{anyhow, Result};
+use std::borrow::Cow;
+use std::env;
+use std::path::{Path, PathBuf};
+use structopt::StructOpt;
 
-pub trait ResultExt<T, E>: failure::ResultExt<T, E>
-where
-    E: fmt::Display,
-{
-    fn with_path<P: AsRef<Path>>(self, path: P) -> result::Result<T, failure::Context<String>>
-    where
-        Self: Sized,
-    {
-        self.with_context(|e| format!("{}: {}", path.as_ref().display(), e))
+#[derive(Debug, StructOpt)]
+#[structopt(about = "Systemd generator for zram swap devices.")]
+struct Opts {
+    /// Set up a single device
+    #[structopt(long)]
+    setup_device: bool,
+
+    arg: String,
+    extra: Vec<String>,
+}
+
+fn get_opts() -> Result<Opts> {
+    let opts = Opts::from_args();
+    println!("{:?}", opts);
+
+    if opts.setup_device && !opts.extra.is_empty() {
+        return Err(anyhow!("--setup-device accepts exactly one argument"));
     }
+
+    if !opts.setup_device && !opts.extra.is_empty() && opts.extra.len() != 2 {
+        return Err(anyhow!("This program requires 1 or 3 arguments"));
+    }
+
+    Ok(opts)
 }
 
-impl<T, E: fmt::Display> ResultExt<T, E> for result::Result<T, E> where
-    result::Result<T, E>: failure::ResultExt<T, E>
-{}
+fn main() -> Result<()> {
+    let root: Cow<'static, str> = match env::var("ZRAM_GENERATOR_ROOT") {
+        Ok(val) => val.into(),
+        Err(env::VarError::NotPresent) => "/".into(),
+        Err(e) => return Err(e.into()),
+    };
+    let root = Path::new(&root[..]);
 
-fn main() {
-    std::process::exit(real_main());
-}
+    let opts = get_opts()?;
 
-fn real_main() -> i32 {
-    match Config::parse() {
-        Ok(config) =>
-            match config.run() {
-                Ok(()) => 0,
-                Err(e) => {
-                    println!("{}", e);
-                    2
-                }
-            },
-        Err(e) => {
-            println!("{}", e);
-            1
-        },
+    if opts.setup_device {
+        let device = config::read_device(&root, &opts.arg)?;
+        Ok(setup::run_device_setup(device, &opts.arg)?)
+    } else {
+        let devices = config::read_all_devices(&root)?;
+        let output_directory = PathBuf::from(opts.arg);
+        Ok(generator::run_generator(&devices, &output_directory)?)
     }
 }
