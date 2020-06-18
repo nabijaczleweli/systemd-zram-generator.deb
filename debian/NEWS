@@ -1,0 +1,17 @@
+systemd-zram (0.2.0~beta.1-1) unstable; urgency=medium
+
+    Starting with this release, systemd-zram now uses liboverdrop[1] for finding
+    configuration fragments and drop-ins, a la systemd.unit(5).
+
+    The defaults for the following [zramX] entries have changed:
+      * zram-fraction:     0.25 -> 0.5
+      * host-memory-limit: 2048 -> None
+      * host-memory-limit: 0 now disables any previous configuration of the
+        device.
+
+    The ucf setup has not changed, but take additional care with merging this
+    updated config.
+
+    [1]: https://docs.rs/liboverdrop/0.0.2/liboverdrop/
+
+ -- наб <nabijaczleweli@gmail.com>  Thu, 18 Jun 2020 16:56:43 +0200

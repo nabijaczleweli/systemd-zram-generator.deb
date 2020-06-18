@@ -1,3 +1,16 @@
+systemd-zram (0.2.0~beta.1-1) unstable; urgency=medium
+
+  * New upstream version 0.2.0~beta.1
+  * Update example config with new defaults
+    + zram-fraction=0.25 -> 0.5
+    + host-memory-limit= 2G -> None
+  * Rebase patches
+  * Add NEWS item regarding new defaults and config parsing
+  * Install everything into /lib instead of /usr/lib and
+    update the service accordingly, fixing non-merged-usr systems
+
+ -- наб <nabijaczleweli@gmail.com>  Thu, 18 Jun 2020 16:55:13 +0200
+
 systemd-zram (0.1.2+ng4~cooper-1) unstable; urgency=medium
 
   * New upstream version 0.1.2+ng4~cooper

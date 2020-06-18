@@ -14,12 +14,11 @@ override_dh_auto_build:
 	sed 's;/usr/lib/systemd/;/lib/systemd/;g' units/swap-create@.service.orig > units/swap-create@.service
 	RUSTFLAGS=-g $(CARGO) build --release
 
-# Host needs zram.ko inserted and /sys mounted
 override_dh_auto_test:
 	RUSTFLAGS=-g $(CARGO) test --release
 
 override_dh_auto_install:
-	$(MAKE) install -o build DESTDIR="$(DESTDIR)"
+	$(MAKE) install -o build DESTDIR="$(DESTDIR)" SYSTEMD_DIR="/lib/systemd/"
 	rm -rf "$(DESTDIR)usr/share/doc/zram-generator"
 	rm -rf "$(DESTDIR)lib/systemd/generators/zram-generator"
 	dh_install
