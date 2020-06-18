@@ -10,6 +10,8 @@ VERSION = $(shell awk '/^version/ {print $$3}' Cargo.toml | sed 's/"//g')
 override_dh_auto_build:
 	mkdir -p target
 	sed 's/@VERSION@/$(VERSION)/g' debian/zram-generator.8 > target/zram-generator.8
+	mv units/swap-create@.service units/swap-create@.service.orig
+	sed 's;/usr/lib/systemd/;/lib/systemd/;g' units/swap-create@.service.orig > units/swap-create@.service
 	RUSTFLAGS=-g $(CARGO) build --release
 
 # Host needs zram.ko inserted and /sys mounted
@@ -19,10 +21,12 @@ override_dh_auto_test:
 override_dh_auto_install:
 	$(MAKE) install -o build DESTDIR="$(DESTDIR)"
 	rm -rf "$(DESTDIR)usr/share/doc/zram-generator"
+	rm -rf "$(DESTDIR)lib/systemd/generators/zram-generator"
 	dh_install
 
 override_dh_auto_clean:
 	rm -rf target/ Cargo.lock
+	if [ -e units/swap-create@.service.orig ]; then mv units/swap-create@.service.orig units/swap-create@.service; fi
 
 override_dh_installdocs:
 	dh_installdocs TODO README.md
