@@ -1,3 +1,13 @@
+systemd-zram (0.2.0~rc.1-1) unstable; urgency=medium
+
+  * New upstream version 0.2.0~rc.1
+  * Build upstream manpages
+  * Sync d/zram-generator.conf
+  * Indiscriminately automatically fix all occurrences of /usr/lib/systemd.
+    This should finally fix all non-merged-usr systems
+
+ -- наб <nabijaczleweli@nabijaczleweli.xyz>  Wed, 24 Jun 2020 13:51:37 +0200
+
 systemd-zram (0.2.0~beta.1-1) unstable; urgency=medium
 
   * New upstream version 0.2.0~beta.1
