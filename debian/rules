@@ -9,10 +9,11 @@ VERSION = $(shell awk '/^version/ {print $$3}' Cargo.toml | sed 's/"//g')
 
 override_dh_auto_build:
 	mkdir -p target/locales
+	$(foreach l,$(shell mkdir -p target && grep -Rl 'usr/lib/systemd' src/ man/ units/ README.md | grep -v "\\.orig$$" | tee -a target/badsystemd-files),[ -f "$(l).orig" ] || mv "$(l)" "$(l).orig"; sed 's;usr/lib/systemd;lib/systemd;g' "$(l).orig" > "$(l)"; )
+	#
 	localedef -i en_GB -c -f UTF-8 -A /usr/share/locale/locale.alias target/locales/en_GB.UTF-8
 	LOCPATH="target/locales/" LC_CTYPE="en_GB.UTF-8" ronn -r --organization="zram-generator developers" man/*.md
-	mv units/swap-create@.service units/swap-create@.service.orig
-	sed 's;/usr/lib/systemd/;/lib/systemd/;g' units/swap-create@.service.orig > units/swap-create@.service
+	#
 	RUSTFLAGS=-g $(CARGO) build --release
 
 override_dh_auto_test:
@@ -25,8 +26,8 @@ override_dh_auto_install:
 	dh_install
 
 override_dh_auto_clean:
-	rm -rf target/ Cargo.lock
-	if [ -e units/swap-create@.service.orig ]; then mv units/swap-create@.service.orig units/swap-create@.service; fi
+	$(foreach l,$(shell cat target/badsystemd-files 2>/dev/null || :),mv "$(l).orig" "$(l)" ;)
+	rm -rf target/ Cargo.lock $(wildcard man/*.5 man/*.8)
 
 override_dh_installdocs:
 	dh_installdocs TODO README.md
