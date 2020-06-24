@@ -54,9 +54,9 @@ fn get_opts() -> Opts {
 }
 
 fn main() -> Result<()> {
-    let root: Cow<'static, str> = match env::var("ZRAM_GENERATOR_ROOT") {
-        Ok(val) => val.into(),
-        Err(env::VarError::NotPresent) => "/".into(),
+    let (root, have_env_var): (Cow<'static, str>, bool) = match env::var("ZRAM_GENERATOR_ROOT") {
+        Ok(val) => (val.into(), true),
+        Err(env::VarError::NotPresent) => ("/".into(), false),
         Err(e) => return Err(e.into()),
     };
     let root = Path::new(&root[..]);
@@ -65,7 +65,7 @@ fn main() -> Result<()> {
         Opts::GenerateUnits(target) => {
             let devices = config::read_all_devices(&root)?;
             let output_directory = PathBuf::from(target);
-            generator::run_generator(&devices, &output_directory)
+            generator::run_generator(&devices, &output_directory, have_env_var)
         }
         Opts::SetupDevice(dev) => {
             let device = config::read_device(&root, &dev)?;
