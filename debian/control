@@ -1,7 +1,7 @@
 Source: systemd-zram
 Section: admin
 Priority: optional
-Maintainer: наб <nabijaczleweli@gmail.com>
+Maintainer: наб <nabijaczleweli@nabijaczleweli.xyz>
 Standards-Version: 4.5.0
 Rules-Requires-Root: no
 Vcs-Git: https://github.com/nabijaczleweli/systemd-zram-generator.deb.git
@@ -10,6 +10,10 @@ Homepage: https://github.com/systemd/zram-generator
 Build-Depends: debhelper,
                debhelper-compat (= 12),
                cargo,
+               ronn (>= 0.9.0),
+#              ^ ronn before that fails with regex+locale related errors
+               locales,
+#              ^ we need to generate some locales for ronn
 
 Package: systemd-zram
 Architecture: linux-any
