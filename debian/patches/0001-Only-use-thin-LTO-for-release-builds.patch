@@ -16,7 +16,7 @@ diff --git a/Cargo.toml b/Cargo.toml
 index c7cb750..16c1106 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
-@@ -18,4 +18,4 @@ tempfile = "3"
+@@ -22,4 +22,4 @@ tempfile = "3"
  fs_extra = "1.1"
 
  [profile.release]
