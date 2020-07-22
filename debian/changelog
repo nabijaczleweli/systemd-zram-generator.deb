@@ -1,3 +1,10 @@
+systemd-zram (0.2.0-1) unstable; urgency=medium
+
+  * New upstream version 0.2.0
+  * Refresh patches
+
+ -- наб <nabijaczleweli@nabijaczleweli.xyz>  Wed, 22 Jul 2020 12:10:38 +0200
+
 systemd-zram (0.2.0~rc.1-1) unstable; urgency=medium
 
   * New upstream version 0.2.0~rc.1
