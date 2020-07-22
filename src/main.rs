@@ -2,10 +2,11 @@
 
 mod config;
 mod generator;
+mod kernlog;
 mod setup;
 
 use anyhow::Result;
-use clap::{app_from_crate, crate_authors, crate_description, crate_name, crate_version, Arg};
+use clap::{crate_description, crate_name, crate_version, App, Arg};
 use std::borrow::Cow;
 use std::env;
 use std::path::{Path, PathBuf};
@@ -21,8 +22,9 @@ enum Opts {
 }
 
 fn get_opts() -> Opts {
-    #[allow(deprecated)]
-    let opts = app_from_crate!("\n")
+    let opts = App::new(crate_name!())
+        .version(crate_version!())
+        .about(crate_description!())
         .arg(
             Arg::from_usage("--setup-device 'Set up a single device'")
                 .conflicts_with("reset-device"),
@@ -54,12 +56,14 @@ fn get_opts() -> Opts {
 }
 
 fn main() -> Result<()> {
-    let (root, have_env_var): (Cow<'static, str>, bool) = match env::var("ZRAM_GENERATOR_ROOT") {
-        Ok(val) => (val.into(), true),
-        Err(env::VarError::NotPresent) => ("/".into(), false),
+    let (root, have_env_var, log_level) = match env::var("ZRAM_GENERATOR_ROOT") {
+        Ok(val) => (val.into(), true, log::LevelFilter::Trace),
+        Err(env::VarError::NotPresent) => (Cow::from("/"), false, log::LevelFilter::Info),
         Err(e) => return Err(e.into()),
     };
     let root = Path::new(&root[..]);
+
+    let _ = kernlog::init_with_level(log_level);
 
     match get_opts() {
         Opts::GenerateUnits(target) => {
