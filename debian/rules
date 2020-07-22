@@ -30,7 +30,7 @@ override_dh_auto_clean:
 	rm -rf target/ Cargo.lock $(wildcard man/*.5 man/*.8)
 
 override_dh_installdocs:
-	dh_installdocs TODO README.md
+	dh_installdocs $(wildcard TODO) README.md
 
 %:
 	dh $@
