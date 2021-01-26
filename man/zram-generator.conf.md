@@ -32,6 +32,12 @@ It is recommended to prefix all filenames in those subdirectories with a two-dig
 To disable a configuration file supplied by the vendor, the recommended way is to place a symlink to */dev/null* in the configuration directory in */etc/*,
 with the same filename as the vendor configuration file.
 
+The generator understands the following option on the kernel command-line: `systemd.zram[=0|1]`.
+When specified with a true argument (or no argument), the `zram0` device will be created.
+Default options apply, but may be overridden by configuration on disk if present.
+When specified with a false argument, no zram devices will be created by the generator.
+This option thus has higher priority than the configuration files.
+
 ## OPTIONS
 
 Each device is configured independently in its `[zramN]` section, where N is a nonnegative integer. Other sections are ignored.
@@ -73,6 +79,27 @@ Devices with the final size of *0* will be discarded.
   Consult */sys/block/zram0/comp_algorithm* for a list of currently loaded compression algorithms, but note that additional ones may be loaded on demand.
 
   If unset, none will be configured and the kernel's default will be used.
+
+* `swap-priority`=
+
+  Controls the relative swap priority, a value between -1 and 32767. Higher numbers indicate higher priority.
+
+  If unset, 100 is used.
+
+* `mount-point`=
+
+  Format the device with a file system (not as swap) and mount this file system over the specified directory.
+  When neither this option nor `fs-type`= is specified, the device will be formatted as swap.
+
+  Note that the device is temporary: contents will be destroyed automatically after the file system is unmounted (to release the backing memory).
+
+* `fs-type`=
+
+  Specifies how the device shall be formatted. The default is *ext2* if `mount-point` is specified, and *swap* otherwise. (Effectively, the device will be formatted as swap, if neither `fs-type`= nor `mount-point`= are specified.)
+
+  Note that the device is temporary: contents will be destroyed automatically after the file system is unmounted (to release the backing memory).
+
+  Also see systemd-makefs(8).
 
 ## ENVIRONMENT VARIABLES
 

@@ -9,15 +9,22 @@ use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use std::fs;
 use std::io::{prelude::*, BufReader};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 pub struct Device {
     pub name: String,
+
     pub host_memory_limit_mb: Option<u64>,
+
     pub zram_fraction: f64,
     pub max_zram_size_mb: Option<u64>,
     pub compression_algorithm: Option<String>,
     pub disksize: u64,
+
+    pub swap_priority: i32,
+    pub mount_point: Option<PathBuf>, // when set, a mount unit will be created
+    pub fs_type: Option<String>,      // useful mostly for mounts, None is the same
+                                      // as "swap" when mount_point is not set
 }
 
 impl Device {
@@ -29,6 +36,9 @@ impl Device {
             max_zram_size_mb: Some(4 * 1024),
             compression_algorithm: None,
             disksize: 0,
+            swap_priority: 100,
+            mount_point: None,
+            fs_type: None,
         }
     }
 
@@ -41,6 +51,11 @@ impl Device {
             None => f.write_str("<none>")?,
         }
         Ok(())
+    }
+
+    pub fn is_swap(&self) -> bool {
+        return self.mount_point.is_none()
+            && (self.fs_type.is_none() || self.fs_type.as_ref().unwrap() == "swap");
     }
 
     fn is_enabled(&self, memtotal_mb: u64) -> bool {
@@ -56,6 +71,16 @@ impl Device {
                 false
             }
             _ => true,
+        }
+    }
+
+    pub fn effective_fs_type(&self) -> &str {
+        match self.fs_type {
+            Some(ref fs_type) => fs_type,
+            None => match self.is_swap() {
+                true => "swap",
+                false => "ext2",
+            },
         }
     }
 
@@ -86,15 +111,17 @@ impl fmt::Display for Device {
     }
 }
 
-pub fn read_device(root: &Path, name: &str) -> Result<Option<Device>> {
+pub fn read_device(root: &Path, kernel_override: bool, name: &str) -> Result<Option<Device>> {
     let memtotal_mb = (get_total_memory_kb(&root)? as f64 / 1024.) as u64;
-    Ok(read_devices(root, memtotal_mb)?.remove(name))
+    Ok(read_devices(root, kernel_override, memtotal_mb)?
+        .remove(name)
+        .filter(|dev| dev.disksize > 0))
 }
 
-pub fn read_all_devices(root: &Path) -> Result<Vec<Device>> {
+pub fn read_all_devices(root: &Path, kernel_override: bool) -> Result<Vec<Device>> {
     let memtotal_mb = get_total_memory_kb(&root)? / 1024;
 
-    let devices: Vec<Device> = read_devices(root, memtotal_mb)?
+    let devices: Vec<Device> = read_devices(root, kernel_override, memtotal_mb)?
         .into_iter()
         .filter(|(_, dev)| dev.disksize > 0)
         .map(|(_, dev)| dev)
@@ -103,11 +130,15 @@ pub fn read_all_devices(root: &Path) -> Result<Vec<Device>> {
     Ok(devices)
 }
 
-fn read_devices(root: &Path, memtotal_mb: u64) -> Result<HashMap<String, Device>> {
+fn read_devices(
+    root: &Path,
+    kernel_override: bool,
+    memtotal_mb: u64,
+) -> Result<HashMap<String, Device>> {
     let fragments = locate_fragments(root);
 
-    if fragments.is_empty() {
-        info!("No configuration file found.");
+    if fragments.is_empty() && !kernel_override {
+        info!("No configuration found.");
     }
 
     let mut devices: HashMap<String, Device> = HashMap::new();
@@ -142,6 +173,12 @@ fn read_devices(root: &Path, memtotal_mb: u64) -> Result<HashMap<String, Device>
                 parse_line(dev, k, v)?;
             }
         }
+    }
+
+    if kernel_override {
+        devices
+            .entry("zram0".to_string())
+            .or_insert_with(|| Device::new("zram0".to_string()));
     }
 
     for dev in devices.values_mut() {
@@ -192,6 +229,32 @@ fn parse_optional_size(val: &str) -> Result<Option<u64>> {
     })
 }
 
+fn parse_swap_priority(val: &str) -> Result<i32> {
+    let val = val
+        .parse()
+        .with_context(|| format!("Failed to parse priority \"{}\"", val))?;
+
+    /* See --priority in swapon(8). */
+    match val {
+        -1..=32767 => Ok(val),
+        _ => Err(anyhow!("Swap priority {} out of range", val)),
+    }
+}
+
+fn verify_mount_point(val: &str) -> Result<PathBuf> {
+    let path = PathBuf::from(val);
+
+    if path.is_relative() {
+        return Err(anyhow!("mount-point {} is not absolute", val));
+    }
+
+    if path.components().any(|c| c == Component::ParentDir) {
+        return Err(anyhow!("mount-point {:#?} is not normalized", path));
+    }
+
+    Ok(path)
+}
+
 fn parse_line(dev: &mut Device, key: &str, value: &str) -> Result<()> {
     match key {
         "host-memory-limit" | "memory-limit" => {
@@ -218,6 +281,18 @@ fn parse_line(dev: &mut Device, key: &str, value: &str) -> Result<()> {
 
         "compression-algorithm" => {
             dev.compression_algorithm = Some(value.to_string());
+        }
+
+        "swap-priority" => {
+            dev.swap_priority = parse_swap_priority(value)?;
+        }
+
+        "mount-point" => {
+            dev.mount_point = Some(verify_mount_point(value)?);
+        }
+
+        "fs-type" => {
+            dev.fs_type = Some(value.to_string());
         }
 
         _ => {
@@ -250,6 +325,43 @@ fn _get_total_memory_kb(path: &Path) -> Result<u64> {
 fn get_total_memory_kb(root: &Path) -> Result<u64> {
     let path = root.join("proc/meminfo");
     _get_total_memory_kb(&path)
+}
+
+fn _kernel_has_option(path: &Path, word: &str) -> Result<Option<bool>> {
+    let text = fs::read_to_string(path)?;
+
+    // The last argument wins, so check all words in turn.
+    Ok(text.split_whitespace().fold(None, |acc, w| {
+        if !w.starts_with(word) {
+            acc
+        } else {
+            match &w[word.len()..] {
+                "" | "=1" | "=yes" | "=true" | "=on" => Some(true),
+                "=0" | "=no" | "=false" | "=off" => Some(false),
+                _ => acc,
+            }
+        }
+    }))
+}
+
+pub fn kernel_has_option(root: &Path, word: &str) -> Result<Option<bool>> {
+    let path = root.join("proc/cmdline");
+    _kernel_has_option(&path, word)
+}
+
+pub fn kernel_zram_option(root: &Path) -> Option<bool> {
+    match kernel_has_option(root, "systemd.zram") {
+        Ok(Some(true)) => Some(true),
+        Ok(Some(false)) => {
+            info!("Disabled by systemd.zram option in /proc/cmdline.");
+            Some(false)
+        }
+        Ok(None) => None,
+        Err(e) => {
+            warn!("Failed to parse /proc/cmdline ({}), ignoring.", e);
+            None
+        }
+    }
 }
 
 #[cfg(test)]
@@ -289,5 +401,65 @@ MemTotal::        8013220 kB
         .unwrap();
         file.flush().unwrap();
         _get_total_memory_kb(file.path()).unwrap();
+    }
+
+    #[test]
+    fn test_kernel_has_option() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+
+        file.write(
+            b"\
+foo=1 foo=0 foo=on foo=off foo
+",
+        )
+        .unwrap();
+        file.flush().unwrap();
+        let foo = _kernel_has_option(file.path(), "foo").unwrap();
+        assert_eq!(foo, Some(true));
+    }
+
+    #[test]
+    fn test_kernel_has_no_option() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+
+        file.write(
+            b"\
+foo=1
+foo=0
+",
+        )
+        .unwrap();
+        file.flush().unwrap();
+        let foo = _kernel_has_option(file.path(), "foo").unwrap();
+        assert_eq!(foo, Some(false));
+    }
+
+    #[test]
+    fn test_verify_mount_point() {
+        let p = verify_mount_point("/foobar").unwrap();
+        assert_eq!(p, PathBuf::from("/foobar"));
+    }
+
+    #[test]
+    fn test_verify_mount_point_absolute() {
+        let p = verify_mount_point("foo/bar");
+        assert!(p.is_err());
+    }
+
+    #[test]
+    fn test_verify_mount_point_normalized() {
+        let p = verify_mount_point("/foo/../bar");
+        assert!(p.is_err());
+    }
+
+    #[test]
+    fn test_verify_mount_point_normalized2() {
+        let p = verify_mount_point("/foo/..");
+        assert!(p.is_err());
+    }
+
+    #[test]
+    fn test_verify_mount_point_self() {
+        verify_mount_point("/foo/./bar/").unwrap();
     }
 }

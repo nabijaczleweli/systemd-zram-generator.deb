@@ -1,19 +1,10 @@
-# `swap-create@.service` generator for zram devices
+# `systemd-zram-setup@.service` generator for zram devices
 
 This generator provides a simple and fast mechanism to configure swap on `/dev/zram*` devices.
 
-Create `/etc/systemd/zram-generator.conf`:
+The main use case is create **swap** devices, but devices with a file system can be created too, see below.
 
-```ini
-# /etc/systemd/zram-generator.conf
-[zram0]
-zram-fraction = 0.5
-```
-
-A zram device will be created for each section. No actual
-configuration is necessary (the default of zram-fraction=0.5 will be
-used unless overriden), but the configuration file with at least one
-section must exist.
+### Configuration
 
 A default config file may be located in /usr.
 This generator checks the following locations:
@@ -36,17 +27,50 @@ See systemd.unit(5) for a detailed description of this logic.
 
 See `zram-generator.conf.example` for a list of available settings.
 
+### Swap devices
+
+Create `/etc/systemd/zram-generator.conf`:
+
+```ini
+# /etc/systemd/zram-generator.conf
+[zram0]
+zram-fraction = 0.5
+```
+
+A zram device will be created for each section. No actual
+configuration is necessary (the default of `zram-fraction=0.5` will be
+used unless overriden), but the configuration file with at least one
+section must exist.
+
+### Mount points
+
+```ini
+# /etc/systemd/zram-generator.conf
+[zram1]
+mount-point = /var/tmp
+```
+
+This will set up a /dev/zram1 with ext2 and generate a mount unit for /var/tmp.
+
+### Rust
 
 The second purpose of this program is to serve as an example of a
 systemd generator in rust. Details are still being figured out.
 
 ### Installation
 
-Executing `make install` will create the following things:
-* Generator binary installed as `/usr/lib/systemd/system-generators/zram-generator`
-* `zram-generator(8)` and `zram-generator.conf(5)` manpages installed into `/usr/share/man/manN/`, this requires [`ronn`](https://github.com/apjanke/ronn-ng).
-* `units/swap-create@.service` copied into `/usr/lib/systemd/system/`
-* `zram-generator.conf.example` copied into `/usr/share/doc/zram-generator/`
+It is recommended to use an existing package:
+
+* Fedora: `sudo dnf install zram-generator-defaults` (or `sudo dnf install zram-generator` to install without the default configuration)
+* Debian: packages provided by nabijaczleweli, see https://debian.nabijaczleweli.xyz/README.
+* Arch: AUR packages https://aur.archlinux.org/packages/zram-generator/ (or
+        https://aur.archlinux.org/packages/zram-generator-git/ for the latest git commit)
+
+To install directly from sources, execute `make build && sudo make install`:
+* `zram-generator` binary is installed in the systemd system generator directory (usually `/usr/lib/systemd/system-generators/`)
+* `zram-generator(8)` and `zram-generator.conf(5)` manpages are installed into `/usr/share/man/manN/`, this requires [`ronn`](https://github.com/apjanke/ronn-ng).
+* `units/systemd-zram-setup@.service` is copied into the systemd system unit directory (usually `/usr/lib/systemd/system/`)
+* `zram-generator.conf.example` is copied into `/usr/share/doc/zram-generator/`
 You need though create your own config file at one of the locations listed above.
 
 ### Testing
@@ -56,7 +80,7 @@ The tests require either the `zram` module to be loaded, or root to run `modprob
 Set the `ZRAM_GENERATOR_ROOT` environment variable to use that
 instead of `/` as root.
 
-The "{generator}" template in `units/swap-create@.service.d/binary-location.conf`
+The "{generator}" template in `units/systemd-zram-setup@.service.d/binary-location.conf`
 can be substituted for a non-standard location of the binary for testing.
 
 ### Authors

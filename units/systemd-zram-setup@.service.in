@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: MIT
+# This file is part of the zram-generator project
+# https://github.com/systemd/zram-generator
+
+[Unit]
+Description=Create swap on /dev/%i
+Documentation=man:zram-generator(8) man:zram-generator.conf(5)
+After=dev-%i.device
+DefaultDependencies=false
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=@SYSTEMD_SYSTEM_GENERATOR_DIR@/zram-generator --setup-device '%i'
+ExecStop=@SYSTEMD_SYSTEM_GENERATOR_DIR@/zram-generator --reset-device '%i'
