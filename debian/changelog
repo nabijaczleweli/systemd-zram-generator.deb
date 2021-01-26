@@ -1,3 +1,12 @@
+systemd-zram (0.3.1-1) unstable; urgency=medium
+
+  * New upstream version 0.3.1
+  * Use upstream's build system for specifying the right systemd paths
+  * Sync default config file
+  * Build and clean services via upstream Makefile
+
+ -- наб <nabijaczleweli@nabijaczleweli.xyz>  Tue, 26 Jan 2021 14:50:36 +0100
+
 systemd-zram (0.2.0-1) unstable; urgency=medium
 
   * New upstream version 0.2.0
