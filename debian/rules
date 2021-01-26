@@ -15,6 +15,7 @@ override_dh_auto_build:
 	LOCPATH="target/locales/" LC_CTYPE="en_GB.UTF-8" ronn -r --organization="zram-generator developers" man/*.md
 	#
 	SYSTEMD_UTIL_DIR=$(UTILDIR) RUSTFLAGS=-g $(CARGO) build --release
+	$(MAKE) systemd_service
 
 override_dh_auto_test:
 	SYSTEMD_UTIL_DIR=$(UTILDIR) RUSTFLAGS=-g $(CARGO) test --release
@@ -26,6 +27,7 @@ override_dh_auto_install:
 	dh_install
 
 override_dh_auto_clean:
+	$(MAKE) clean
 	rm -rf target/ Cargo.lock $(wildcard man/*.5 man/*.8)
 
 override_dh_installdocs:
