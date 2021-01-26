@@ -10,6 +10,8 @@ Homepage: https://github.com/systemd/zram-generator
 Build-Depends: debhelper,
                debhelper-compat (= 12),
                cargo,
+               pkg-config,
+               systemd,
                ronn (>= 0.9.0),
 #              ^ ronn before that fails with regex+locale related errors
                locales,
