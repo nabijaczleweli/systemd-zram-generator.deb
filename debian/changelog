@@ -1,3 +1,9 @@
+systemd-zram (0.3.2-1) unstable; urgency=medium
+
+  * New upstream version 0.3.2
+
+ -- наб <nabijaczleweli@nabijaczleweli.xyz>  Wed, 24 Feb 2021 16:11:32 +0100
+
 systemd-zram (0.3.1-1) unstable; urgency=medium
 
   * New upstream version 0.3.1
