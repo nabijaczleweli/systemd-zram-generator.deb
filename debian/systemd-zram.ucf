@@ -1,1 +1,1 @@
-/usr/share/systemd-zram/zram-generator.conf /etc/systemd/zram-generator.conf
+/usr/share/doc/systemd-zram/zram-generator.conf /etc/systemd/zram-generator.conf

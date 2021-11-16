@@ -1,3 +1,24 @@
+systemd-zram (1.1.0-1) unstable; urgency=medium
+
+  1. Upstream now supports the zram-size configuration variable,
+     replacing the now-deprecated zram-fraction and max-zram-size
+     (they continue to work, but write warnings to the journal).
+
+     A configuration file can be migrated by replacing those fields
+     with a single declaration in the form
+       zram-size = min(ram * ${zram-fraction}, ${max-zram-size})
+
+     The arithmetic DSL supports most notation, log, trig,
+     and logic functions, cf. zram-generator.conf(5).
+     The default value is unchanged at min(ram / 2, 4096).
+
+  2. Upstream now also supports writeback-device,
+     correspoding to the backing_dev zram file,
+     to which incompressible pages are written under memory pressure.
+     It's unset by default.
+
+ -- наб <nabijaczleweli@nabijaczleweli.xyz>  Tue, 16 Nov 2021 22:27:39 +0100
+
 systemd-zram (0.2.0~beta.1-1) unstable; urgency=medium
 
     Starting with this release, systemd-zram now uses liboverdrop[1] for finding
