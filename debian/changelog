@@ -7,6 +7,7 @@ systemd-zram (1.1.0-1) unstable; urgency=medium
     zram-size and writeback-device fields
   * Add 0001-Warn-on-deprecated-memory-limit-zram-fraction-and-ma.patch,
     re-adding warnings on deprecated fields, ultimately dropped from #121
+  * Remove lintian overrides, now useless
 
  -- наб <nabijaczleweli@nabijaczleweli.xyz>  Tue, 16 Nov 2021 22:27:10 +0100
 
