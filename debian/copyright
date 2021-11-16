@@ -1,14 +1,16 @@
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
-Upstream-Name: systemd-zram-generator
+Upstream-Name: zram-generator
 Upstream-Contact: https://github.com/systemd/zram-generator/issues
 Source: https://github.com/systemd/zram-generator
 
 Files: *
 Copyright: 2018 Zbigniew Jędrzejewski-Szmek <zbyszek@in.waw.pl>
+           2019 Igor Raits <i.gnatenko.brain@gmail.com>
+           2019 наб <nabijaczleweli@nabijaczleweli.xyz>
 License: Expat
 
 Files: debian/*
-Copyright: 2020 nabijaczleweli <nabijaczleweli@gmail.com>
+Copyright: 2020 наб <nabijaczleweli@nabijaczleweli.xyz>
 License: Expat
 
 License: Expat
