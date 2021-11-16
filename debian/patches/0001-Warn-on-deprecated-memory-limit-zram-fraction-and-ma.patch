@@ -1,0 +1,51 @@
+From: =?utf-8?b?0L3QsNCx?= <nabijaczleweli@nabijaczleweli.xyz>
+Date: Wed, 27 Oct 2021 21:26:50 +0200
+Subject: Warn on deprecated memory-limit, zram-fraction, and max-zram-size
+
+This was removed from the final version of #121,
+with the promise that I'd keep it as a patch.
+So, here it is
+---
+ src/config.rs | 15 ++++++++++++++-
+ 1 file changed, 14 insertions(+), 1 deletion(-)
+
+diff --git a/src/config.rs b/src/config.rs
+index 695d271..80f78b7 100644
+--- a/src/config.rs
++++ b/src/config.rs
+@@ -321,7 +321,12 @@ fn verify_mount_point(key: &str, val: &str) -> Result<PathBuf> {
+ fn parse_line(dev: &mut Device, key: &str, value: &str) -> Result<()> {
+     match key {
+         "host-memory-limit" | "memory-limit" => {
+-            /* memory-limit is for backwards compat. host-memory-limit name is preferred. */
++            if key == "memory-limit" {
++                warn!(
++                    "{}: deprecated {} configuration key set. Use {} = instead!",
++                    dev.name, key, "host-memory-limit"
++                );
++            }
+             dev.host_memory_limit_mb = parse_optional_size(value)?;
+         }
+ 
+@@ -362,6 +367,10 @@ fn parse_line(dev: &mut Device, key: &str, value: &str) -> Result<()> {
+ 
+         "zram-fraction" => {
+             /* zram-fraction is for backwards compat. zram-size = is preferred. */
++            warn!(
++                "{}: deprecated {} configuration key set. Use {} = instead!",
++                dev.name, key, "zram-size"
++            );
+ 
+             dev.zram_fraction = Some(
+                 value
+@@ -379,6 +388,10 @@ fn parse_line(dev: &mut Device, key: &str, value: &str) -> Result<()> {
+ 
+         "max-zram-size" => {
+             /* zram-fraction is for backwards compat. zram-size = is preferred. */
++            warn!(
++                "{}: deprecated {} configuration key set. Use {} = instead!",
++                dev.name, key, "zram-size"
++            );
+ 
+             dev.max_zram_size_mb = Some(parse_optional_size(value)?);
+         }

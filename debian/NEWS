@@ -17,6 +17,10 @@ systemd-zram (1.1.0-1) unstable; urgency=medium
      to which incompressible pages are written under memory pressure.
      It's unset by default.
 
+  3. memory-limit has long been deprecated, but there's now a warning,
+     like for zram-fraction and max-zram-size, too:
+     upgrade to host-memory-limit
+
  -- наб <nabijaczleweli@nabijaczleweli.xyz>  Tue, 16 Nov 2021 22:27:39 +0100
 
 systemd-zram (0.2.0~beta.1-1) unstable; urgency=medium
