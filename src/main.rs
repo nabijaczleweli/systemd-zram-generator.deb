@@ -32,7 +32,7 @@ fn get_opts() -> Opts {
         )
         .arg(Arg::from_usage("--reset-device 'Reset (destroy) a device'"))
         .arg(Arg::from_usage(
-            "<directory/device> 'Target directory for generator or device to operate on'",
+            "<directory|device> 'Target directory for generator or device to operate on'",
         ))
         .arg(
             Arg::from_usage(
@@ -41,10 +41,11 @@ fn get_opts() -> Opts {
             .number_of_values(2)
             .conflicts_with_all(&["setup-device", "reset-device"]),
         )
+        .after_help(&*format!("Uses {}.", setup::SYSTEMD_MAKEFS_COMMAND))
         .get_matches();
 
     let val = opts
-        .value_of("directory/device")
+        .value_of("directory|device")
         .expect("clap invariant")
         .to_string();
     if opts.is_present("setup-device") {
@@ -57,16 +58,14 @@ fn get_opts() -> Opts {
 }
 
 fn main() -> Result<()> {
-    let (root, have_env_var, log_level) = match env::var("ZRAM_GENERATOR_ROOT") {
-        Ok(val) => (val.into(), true, LevelFilter::Trace),
-        Err(env::VarError::NotPresent) => (Cow::from("/"), false, LevelFilter::Info),
-        Err(e) => return Err(e.into()),
+    let (root, have_env_var, log_level) = match env::var_os("ZRAM_GENERATOR_ROOT") {
+        Some(val) => (PathBuf::from(val).into(), true, LevelFilter::Trace),
+        None => (Cow::from(Path::new("/")), false, LevelFilter::Info),
     };
-    let root = Path::new(&root[..]);
 
     let _ = kernlog::init_with_level(log_level);
 
-    let kernel_override = || match config::kernel_zram_option(root) {
+    let kernel_override = || match config::kernel_zram_option(&root) {
         Some(false) => {
             info!("Disabled by kernel cmdline option, exiting.");
             std::process::exit(0);
@@ -77,14 +76,12 @@ fn main() -> Result<()> {
 
     match get_opts() {
         Opts::GenerateUnits(target) => {
-            let kernel_override = kernel_override();
-            let devices = config::read_all_devices(&root, kernel_override)?;
+            let devices = config::read_all_devices(&root, kernel_override())?;
             let output_directory = PathBuf::from(target);
             generator::run_generator(&devices, &output_directory, have_env_var)
         }
         Opts::SetupDevice(dev) => {
-            let kernel_override = kernel_override();
-            let device = config::read_device(&root, kernel_override, &dev)?;
+            let device = config::read_device(&root, kernel_override(), &dev)?;
             setup::run_device_setup(device, &dev)
         }
         Opts::ResetDevice(dev) => {

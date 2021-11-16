@@ -1,30 +1,42 @@
 /* SPDX-License-Identifier: MIT */
 
 use anyhow::{anyhow, Context, Result};
+use fasteval::Evaler;
 use ini::Ini;
 use liboverdrop::FragmentScanner;
 use log::{info, warn};
-use std::cmp;
+use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use std::fs;
 use std::io::{prelude::*, BufReader};
 use std::path::{Component, Path, PathBuf};
 
+const DEFAULT_ZRAM_SIZE: &str = "min(ram / 2, 4096)";
+
 pub struct Device {
     pub name: String,
 
     pub host_memory_limit_mb: Option<u64>,
 
-    pub zram_fraction: f64,
-    pub max_zram_size_mb: Option<u64>,
+    /// Default: `DEFAULT_ZRAM_SIZE`
+    pub zram_size: Option<(String, fasteval::ExpressionI, fasteval::Slab)>,
     pub compression_algorithm: Option<String>,
+    pub writeback_dev: Option<PathBuf>,
     pub disksize: u64,
 
     pub swap_priority: i32,
-    pub mount_point: Option<PathBuf>, // when set, a mount unit will be created
-    pub fs_type: Option<String>,      // useful mostly for mounts, None is the same
-                                      // as "swap" when mount_point is not set
+    /// when set, a mount unit will be created
+    pub mount_point: Option<PathBuf>,
+    /// useful mostly for mounts,
+    /// None is the same as "swap" when mount_point is not set
+    pub fs_type: Option<String>,
+    pub options: Cow<'static, str>,
+
+    /// deprecated, overrides zram_size
+    pub zram_fraction: Option<f64>,
+    /// deprecated, overrides zram_size
+    pub max_zram_size_mb: Option<Option<u64>>,
 }
 
 impl Device {
@@ -32,30 +44,23 @@ impl Device {
         Device {
             name,
             host_memory_limit_mb: None,
-            zram_fraction: 0.5,
-            max_zram_size_mb: Some(4 * 1024),
+            zram_size: None,
             compression_algorithm: None,
+            writeback_dev: None,
             disksize: 0,
             swap_priority: 100,
             mount_point: None,
             fs_type: None,
-        }
-    }
+            options: "discard".into(),
 
-    fn write_optional_mb(f: &mut fmt::Formatter<'_>, val: Option<u64>) -> fmt::Result {
-        match val {
-            Some(val) => {
-                write!(f, "{}", val)?;
-                f.write_str("MB")?;
-            }
-            None => f.write_str("<none>")?,
+            zram_fraction: None,
+            max_zram_size_mb: None,
         }
-        Ok(())
     }
 
     pub fn is_swap(&self) -> bool {
-        return self.mount_point.is_none()
-            && (self.fs_type.is_none() || self.fs_type.as_ref().unwrap() == "swap");
+        self.mount_point.is_none()
+            && (self.fs_type.is_none() || self.fs_type.as_ref().unwrap() == "swap")
     }
 
     fn is_enabled(&self, memtotal_mb: u64) -> bool {
@@ -75,59 +80,114 @@ impl Device {
     }
 
     pub fn effective_fs_type(&self) -> &str {
-        match self.fs_type {
-            Some(ref fs_type) => fs_type,
-            None => match self.is_swap() {
-                true => "swap",
-                false => "ext2",
-            },
+        match (self.fs_type.as_ref(), self.is_swap()) {
+            (Some(fs_type), _) => fs_type,
+            (None, true) => "swap",
+            (None, false) => "ext2",
         }
     }
 
-    fn set_disksize_if_enabled(&mut self, memtotal_mb: u64) {
+    fn set_disksize_if_enabled(&mut self, memtotal_mb: u64) -> Result<()> {
         if !self.is_enabled(memtotal_mb) {
-            return;
+            return Ok(());
         }
 
-        self.disksize = (self.zram_fraction * memtotal_mb as f64) as u64 * 1024 * 1024;
-        if let Some(max_mb) = self.max_zram_size_mb {
-            self.disksize = cmp::min(self.disksize, max_mb * 1024 * 1024);
+        if self.zram_fraction.is_some() || self.max_zram_size_mb.is_some() {
+            // deprecated path
+            let max_mb = self.max_zram_size_mb.unwrap_or(None).unwrap_or(u64::MAX);
+            self.disksize = ((self.zram_fraction.unwrap_or(0.5) * memtotal_mb as f64) as u64)
+                .min(max_mb)
+                * (1024 * 1024);
+        } else {
+            self.disksize = (match self.zram_size.as_ref() {
+                Some(zs) => {
+                    zs.1.from(&zs.2.ps)
+                        .eval(&zs.2, &mut RamNs(memtotal_mb as f64))
+                        .with_context(|| format!("{} zram-size", self.name))
+                        .and_then(|f| {
+                            if f >= 0. {
+                                Ok(f)
+                            } else {
+                                Err(anyhow!("{}: zram-size={} < 0", self.name, f))
+                            }
+                        })?
+                }
+                None => (memtotal_mb as f64 / 2.).min(4096.), // DEFAULT_ZRAM_SIZE
+            } * 1024.
+                * 1024.) as u64;
         }
+
+        Ok(())
     }
 }
 
 impl fmt::Display for Device {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}: host-memory-limit=", self.name)?;
-        Device::write_optional_mb(f, self.host_memory_limit_mb)?;
-        write!(f, " zram-fraction={} max-zram-size=", self.zram_fraction)?;
-        Device::write_optional_mb(f, self.max_zram_size_mb)?;
-        f.write_str(" compression-algorithm=")?;
-        match self.compression_algorithm.as_ref() {
-            Some(alg) => f.write_str(alg)?,
-            None => f.write_str("<default>")?,
+        write!(
+            f,
+            "{}: host-memory-limit={} zram-size={} compression-algorithm={} writeback-device={} options={}",
+            self.name,
+            OptMB(self.host_memory_limit_mb),
+            self.zram_size
+                .as_ref()
+                .map(|zs| &zs.0[..])
+                .unwrap_or(DEFAULT_ZRAM_SIZE),
+            self.compression_algorithm.as_deref().unwrap_or("<default>"),
+            self.writeback_dev.as_deref().unwrap_or_else(|| Path::new("<none>")).display(),
+            self.options
+        )?;
+        if self.zram_fraction.is_some() || self.max_zram_size_mb.is_some() {
+            f.write_str(" (")?;
+            if let Some(zf) = self.zram_fraction {
+                write!(f, "zram-fraction={}", zf)?;
+            }
+            if self.max_zram_size_mb.is_some() {
+                f.write_str(" ")?;
+            }
+            if let Some(mzs) = self.max_zram_size_mb {
+                write!(f, "max-zram-size={}", OptMB(mzs))?;
+            }
+            f.write_str(")")?;
         }
         Ok(())
     }
 }
 
+struct OptMB(Option<u64>);
+impl fmt::Display for OptMB {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            Some(val) => write!(f, "{}MB", val),
+            None => f.write_str("<none>"),
+        }
+    }
+}
+
+struct RamNs(f64);
+impl fasteval::EvalNamespace for RamNs {
+    fn lookup(&mut self, name: &str, args: Vec<f64>, _: &mut String) -> Option<f64> {
+        if name == "ram" && args.is_empty() {
+            Some(self.0)
+        } else {
+            None
+        }
+    }
+}
+
 pub fn read_device(root: &Path, kernel_override: bool, name: &str) -> Result<Option<Device>> {
-    let memtotal_mb = (get_total_memory_kb(&root)? as f64 / 1024.) as u64;
-    Ok(read_devices(root, kernel_override, memtotal_mb)?
+    let memtotal_mb = get_total_memory_kb(root)? as f64 / 1024.;
+    Ok(read_devices(root, kernel_override, memtotal_mb as u64)?
         .remove(name)
         .filter(|dev| dev.disksize > 0))
 }
 
 pub fn read_all_devices(root: &Path, kernel_override: bool) -> Result<Vec<Device>> {
-    let memtotal_mb = get_total_memory_kb(&root)? / 1024;
-
-    let devices: Vec<Device> = read_devices(root, kernel_override, memtotal_mb)?
+    let memtotal_mb = get_total_memory_kb(root)? as f64 / 1024.;
+    Ok(read_devices(root, kernel_override, memtotal_mb as u64)?
         .into_iter()
         .filter(|(_, dev)| dev.disksize > 0)
         .map(|(_, dev)| dev)
-        .collect();
-
-    Ok(devices)
+        .collect())
 }
 
 fn read_devices(
@@ -182,7 +242,7 @@ fn read_devices(
     }
 
     for dev in devices.values_mut() {
-        dev.set_disksize_if_enabled(memtotal_mb);
+        dev.set_disksize_if_enabled(memtotal_mb)?;
     }
 
     Ok(devices)
@@ -206,15 +266,18 @@ fn locate_fragments(root: &Path) -> BTreeMap<String, PathBuf> {
     );
 
     let mut fragments = cfg.scan();
-
-    for dir in base_dirs.iter().rev() {
-        let path = PathBuf::from(dir).join("systemd/zram-generator.conf");
-        if path.exists() {
-            fragments.insert("".to_string(), path); // The empty string shall sort earliest
-            break;
-        }
+    if let Some(path) = base_dirs
+        .into_iter()
+        .rev()
+        .map(PathBuf::from)
+        .map(|mut p| {
+            p.push("systemd/zram-generator.conf");
+            p
+        })
+        .find(|p| p.exists())
+    {
+        fragments.insert(String::new(), path); // The empty string shall sort earliest
     }
-
     fragments
 }
 
@@ -236,23 +299,23 @@ fn parse_swap_priority(val: &str) -> Result<i32> {
 
     /* See --priority in swapon(8). */
     match val {
-        -1..=32767 => Ok(val),
+        -1..=0x7FFF => Ok(val),
         _ => Err(anyhow!("Swap priority {} out of range", val)),
     }
 }
 
-fn verify_mount_point(val: &str) -> Result<PathBuf> {
-    let path = PathBuf::from(val);
+fn verify_mount_point(key: &str, val: &str) -> Result<PathBuf> {
+    let path = Path::new(val);
 
     if path.is_relative() {
-        return Err(anyhow!("mount-point {} is not absolute", val));
+        return Err(anyhow!("{} {} is not absolute", key, val));
     }
 
     if path.components().any(|c| c == Component::ParentDir) {
-        return Err(anyhow!("mount-point {:#?} is not normalized", path));
+        return Err(anyhow!("{} {:#?} is not normalized", key, path));
     }
 
-    Ok(path)
+    Ok(path.components().collect()) // normalise away /./ components
 }
 
 fn parse_line(dev: &mut Device, key: &str, value: &str) -> Result<()> {
@@ -262,25 +325,23 @@ fn parse_line(dev: &mut Device, key: &str, value: &str) -> Result<()> {
             dev.host_memory_limit_mb = parse_optional_size(value)?;
         }
 
-        "zram-fraction" => {
-            dev.zram_fraction = value
-                .parse()
-                .with_context(|| format!("Failed to parse zram-fraction \"{}\"", value))
-                .and_then(|f| {
-                    if f >= 0. {
-                        Ok(f)
-                    } else {
-                        Err(anyhow!("zram-fraction {} < 0", f))
-                    }
-                })?;
-        }
-
-        "max-zram-size" => {
-            dev.max_zram_size_mb = parse_optional_size(value)?;
+        "zram-size" => {
+            let mut sl = fasteval::Slab::new();
+            dev.zram_size = Some((
+                value.to_string(),
+                fasteval::Parser::new()
+                    .parse_noclear(value, &mut sl.ps)
+                    .with_context(|| format!("{} zram-size", dev.name))?,
+                sl,
+            ));
         }
 
         "compression-algorithm" => {
             dev.compression_algorithm = Some(value.to_string());
+        }
+
+        "writeback-device" => {
+            dev.writeback_dev = Some(verify_mount_point(key, value)?);
         }
 
         "swap-priority" => {
@@ -288,15 +349,42 @@ fn parse_line(dev: &mut Device, key: &str, value: &str) -> Result<()> {
         }
 
         "mount-point" => {
-            dev.mount_point = Some(verify_mount_point(value)?);
+            dev.mount_point = Some(verify_mount_point(key, value)?);
         }
 
         "fs-type" => {
             dev.fs_type = Some(value.to_string());
         }
 
+        "options" => {
+            dev.options = value.to_string().into();
+        }
+
+        "zram-fraction" => {
+            /* zram-fraction is for backwards compat. zram-size = is preferred. */
+
+            dev.zram_fraction = Some(
+                value
+                    .parse()
+                    .with_context(|| format!("Failed to parse zram-fraction \"{}\"", value))
+                    .and_then(|f| {
+                        if f >= 0. {
+                            Ok(f)
+                        } else {
+                            Err(anyhow!("{}: zram-fraction={} < 0", dev.name, f))
+                        }
+                    })?,
+            );
+        }
+
+        "max-zram-size" => {
+            /* zram-fraction is for backwards compat. zram-size = is preferred. */
+
+            dev.max_zram_size_mb = Some(parse_optional_size(value)?);
+        }
+
         _ => {
-            warn!("Unknown key {}, ignoring.", key);
+            warn!("{}: unknown key {}, ignoring.", dev.name, key);
         }
     }
 
@@ -312,10 +400,8 @@ fn _get_total_memory_kb(path: &Path) -> Result<u64> {
     {
         let line = line?;
         let mut fields = line.split_whitespace();
-        if let Some("MemTotal:") = fields.next() {
-            if let Some(v) = fields.next() {
-                return Ok(v.parse()?);
-            }
+        if let (Some("MemTotal:"), Some(val)) = (fields.next(), fields.next()) {
+            return Ok(val.parse()?);
         }
     }
 
@@ -330,18 +416,17 @@ fn get_total_memory_kb(root: &Path) -> Result<u64> {
 fn _kernel_has_option(path: &Path, word: &str) -> Result<Option<bool>> {
     let text = fs::read_to_string(path)?;
 
-    // The last argument wins, so check all words in turn.
-    Ok(text.split_whitespace().fold(None, |acc, w| {
-        if !w.starts_with(word) {
-            acc
-        } else {
-            match &w[word.len()..] {
-                "" | "=1" | "=yes" | "=true" | "=on" => Some(true),
-                "=0" | "=no" | "=false" | "=off" => Some(false),
-                _ => acc,
-            }
-        }
-    }))
+    // Last argument wins
+    Ok(text
+        .split_whitespace()
+        .rev()
+        .filter(|w| w.starts_with(word))
+        .flat_map(|w| match &w[word.len()..] {
+            "" | "=1" | "=yes" | "=true" | "=on" => Some(true),
+            "=0" | "=no" | "=false" | "=off" => Some(false),
+            _ => None,
+        })
+        .next())
 }
 
 pub fn kernel_has_option(root: &Path, word: &str) -> Result<Option<bool>> {
@@ -351,12 +436,11 @@ pub fn kernel_has_option(root: &Path, word: &str) -> Result<Option<bool>> {
 
 pub fn kernel_zram_option(root: &Path) -> Option<bool> {
     match kernel_has_option(root, "systemd.zram") {
-        Ok(Some(true)) => Some(true),
+        Ok(r @ Some(true)) | Ok(r @ None) => r,
         Ok(Some(false)) => {
             info!("Disabled by systemd.zram option in /proc/cmdline.");
             Some(false)
         }
-        Ok(None) => None,
         Err(e) => {
             warn!("Failed to parse /proc/cmdline ({}), ignoring.", e);
             None
@@ -368,20 +452,23 @@ pub fn kernel_zram_option(root: &Path) -> Option<bool> {
 mod tests {
     use super::*;
 
+    fn file_with(data: &[u8]) -> tempfile::NamedTempFile {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        file.write(data).unwrap();
+        file.flush().unwrap();
+        file
+    }
+
     #[test]
     fn test_get_total_memory_kb() {
-        let mut file = tempfile::NamedTempFile::new().unwrap();
-
-        file.write(
+        let file = file_with(
             b"\
 MemTotal:        8013220 kB
 MemFree:          721288 kB
 MemAvailable:    1740336 kB
 Buffers:          292752 kB
 ",
-        )
-        .unwrap();
-        file.flush().unwrap();
+        );
         let mem = _get_total_memory_kb(file.path()).unwrap();
         assert_eq!(mem, 8013220);
     }
@@ -389,77 +476,114 @@ Buffers:          292752 kB
     #[test]
     #[should_panic(expected = "Couldn't find MemTotal")]
     fn test_get_total_memory_not_found() {
-        let mut file = tempfile::NamedTempFile::new().unwrap();
-
-        file.write(
+        let file = file_with(
             b"\
 MemTotala:        8013220 kB
 aMemTotal:        8013220 kB
 MemTotal::        8013220 kB
 ",
-        )
-        .unwrap();
-        file.flush().unwrap();
+        );
         _get_total_memory_kb(file.path()).unwrap();
     }
 
     #[test]
     fn test_kernel_has_option() {
-        let mut file = tempfile::NamedTempFile::new().unwrap();
-
-        file.write(
-            b"\
-foo=1 foo=0 foo=on foo=off foo
-",
-        )
-        .unwrap();
-        file.flush().unwrap();
-        let foo = _kernel_has_option(file.path(), "foo").unwrap();
-        assert_eq!(foo, Some(true));
+        let file = file_with(b"foo=1 foo=0 foo=on foo=off foo\n");
+        assert_eq!(_kernel_has_option(file.path(), "foo").unwrap(), Some(true));
     }
 
     #[test]
     fn test_kernel_has_no_option() {
-        let mut file = tempfile::NamedTempFile::new().unwrap();
-
-        file.write(
+        let file = file_with(
             b"\
 foo=1
 foo=0
 ",
-        )
-        .unwrap();
-        file.flush().unwrap();
-        let foo = _kernel_has_option(file.path(), "foo").unwrap();
-        assert_eq!(foo, Some(false));
+        );
+        assert_eq!(_kernel_has_option(file.path(), "foo").unwrap(), Some(false));
     }
 
     #[test]
     fn test_verify_mount_point() {
-        let p = verify_mount_point("/foobar").unwrap();
-        assert_eq!(p, PathBuf::from("/foobar"));
+        for e in ["foo/bar", "/foo/../bar", "/foo/.."] {
+            assert!(verify_mount_point("test", e).is_err(), "{}", e);
+        }
+
+        for (p, o) in [
+            ("/foobar", "/foobar"),
+            ("/", "/"),
+            ("//", "/"),
+            ("///", "/"),
+            ("/foo/./bar/", "/foo/bar"),
+        ] {
+            assert_eq!(
+                verify_mount_point("test", p).unwrap(),
+                Path::new(o),
+                "{} vs {}",
+                p,
+                o
+            );
+        }
+    }
+
+    fn dev_with_zram_size_size(val: Option<&str>, memtotal_mb: u64) -> u64 {
+        let mut dev = Device::new("zram0".to_string());
+        if let Some(val) = val {
+            parse_line(&mut dev, "zram-size", val).unwrap();
+        }
+        assert!(dev.is_enabled(memtotal_mb));
+        dev.set_disksize_if_enabled(memtotal_mb).unwrap();
+        dev.disksize
     }
 
     #[test]
-    fn test_verify_mount_point_absolute() {
-        let p = verify_mount_point("foo/bar");
-        assert!(p.is_err());
+    fn test_eval_size_expression() {
+        assert_eq!(
+            dev_with_zram_size_size(Some("0.5 * ram"), 100),
+            50 * 1024 * 1024
+        );
     }
 
     #[test]
-    fn test_verify_mount_point_normalized() {
-        let p = verify_mount_point("/foo/../bar");
-        assert!(p.is_err());
+    fn test_eval_size_expression_default() {
+        assert_eq!(dev_with_zram_size_size(None, 100), 50 * 1024 * 1024);
+        assert_eq!(dev_with_zram_size_size(None, 10000), 4096 * 1024 * 1024);
     }
 
     #[test]
-    fn test_verify_mount_point_normalized2() {
-        let p = verify_mount_point("/foo/..");
-        assert!(p.is_err());
+    fn test_eval_size_expression_default_equivalent() {
+        assert_eq!(
+            dev_with_zram_size_size(Some(DEFAULT_ZRAM_SIZE), 100),
+            50 * 1024 * 1024
+        );
+        assert_eq!(
+            dev_with_zram_size_size(Some(DEFAULT_ZRAM_SIZE), 10000),
+            4096 * 1024 * 1024
+        );
     }
 
     #[test]
-    fn test_verify_mount_point_self() {
-        verify_mount_point("/foo/./bar/").unwrap();
+    #[should_panic(expected = "Undefined(\"array\")")]
+    fn test_eval_size_expression_unknown_variable() {
+        dev_with_zram_size_size(Some("array(1,2)"), 100);
+    }
+
+    #[test]
+    #[should_panic(expected = "zram-size=NaN")]
+    fn test_eval_size_expression_nan() {
+        dev_with_zram_size_size(Some("(ram-100)/0"), 100);
+    }
+
+    #[test]
+    fn test_eval_size_expression_inf() {
+        assert_eq!(dev_with_zram_size_size(Some("(ram-99)/0"), 100), u64::MAX); // +∞
+    }
+
+    #[test]
+    fn test_eval_size_expression_min() {
+        assert_eq!(
+            dev_with_zram_size_size(Some("min(0.5 * ram, 4000)"), 3000),
+            1500 * 1024 * 1024
+        );
     }
 }
