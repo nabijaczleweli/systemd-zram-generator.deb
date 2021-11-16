@@ -1,5 +1,9 @@
 # `systemd-zram-setup@.service` generator for zram devices
 
+<a href="https://repology.org/project/zram-generator/versions">
+    <img align="right" src="https://repology.org/badge/vertical-allrepos/zram-generator.svg?exclude_sources=site&exclude_unsupported=1" alt="Packaging status">
+</a>
+
 This generator provides a simple and fast mechanism to configure swap on `/dev/zram*` devices.
 
 The main use case is create **swap** devices, but devices with a file system can be created too, see below.
@@ -34,11 +38,11 @@ Create `/etc/systemd/zram-generator.conf`:
 ```ini
 # /etc/systemd/zram-generator.conf
 [zram0]
-zram-fraction = 0.5
+zram-size = ram / 2
 ```
 
 A zram device will be created for each section. No actual
-configuration is necessary (the default of `zram-fraction=0.5` will be
+configuration is necessary (the default of `zram-size = min(ram / 2, 4096)` will be
 used unless overriden), but the configuration file with at least one
 section must exist.
 
@@ -54,8 +58,8 @@ This will set up a /dev/zram1 with ext2 and generate a mount unit for /var/tmp.
 
 ### Rust
 
-The second purpose of this program is to serve as an example of a
-systemd generator in rust. Details are still being figured out.
+The second purpose of this program is to serve as an example of a systemd
+generator in rust.
 
 ### Installation
 
@@ -63,8 +67,7 @@ It is recommended to use an existing package:
 
 * Fedora: `sudo dnf install zram-generator-defaults` (or `sudo dnf install zram-generator` to install without the default configuration)
 * Debian: packages provided by nabijaczleweli, see https://debian.nabijaczleweli.xyz/README.
-* Arch: AUR packages https://aur.archlinux.org/packages/zram-generator/ (or
-        https://aur.archlinux.org/packages/zram-generator-git/ for the latest git commit)
+* Arch: `sudo pacman -S zram-generator` (or https://aur.archlinux.org/packages/zram-generator-git/ for the latest git commit)
 
 To install directly from sources, execute `make build && sudo make install`:
 * `zram-generator` binary is installed in the systemd system generator directory (usually `/usr/lib/systemd/system-generators/`)
@@ -72,6 +75,17 @@ To install directly from sources, execute `make build && sudo make install`:
 * `units/systemd-zram-setup@.service` is copied into the systemd system unit directory (usually `/usr/lib/systemd/system/`)
 * `zram-generator.conf.example` is copied into `/usr/share/doc/zram-generator/`
 You need though create your own config file at one of the locations listed above.
+
+#### tl;dr
+
+- Install `zram-generator` using one of the methods listed above.
+- Create a `zram-generator.conf` config file.
+- Run `systemctl daemon-reload` to create new device units.
+- Run `systemctl start /dev/zram0` (adjust the name as appropriate to match the config).
+- Call `zramctl` or `swapon` to confirm that the device has been created and is in use.
+
+Once installed and configured, the generator will be invoked by systemd early at boot,
+there is no need to do anything else.
 
 ### Testing
 

@@ -23,6 +23,12 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v2
+      - name: Install linux-modules-extra-$(uname -r)
+        run: |
+          sudo apt update
+          sudo apt install -y linux-modules-extra-$(uname -r)
+      - name: Insert zram module
+        run: sudo modprobe -v zram
       - name: Install Rust
         uses: actions-rs/toolchain@v1
         with:
@@ -30,9 +36,7 @@ jobs:
           override: true
           profile: minimal
       - name: Build
-        run: make build CARGOFLAGS="--verbose"
-      - name: Insert zram module
-        run: sudo modprobe -v zram
+        run: make program CARGOFLAGS="--verbose"
       - name: Run tests
         run: make check CARGOFLAGS="--verbose"
 
@@ -68,7 +72,5 @@ jobs:
           override: true
           profile: minimal
           components: clippy
-      - name: Check formatting
-        uses: actions-rs/clippy@master
-        with:
-          args: -- -D warnings
+      - name: Validate clippy
+        run: make clippy CARGOFLAGS="-- -D warnings"

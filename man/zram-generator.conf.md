@@ -1,5 +1,4 @@
-
-[comment]: SPDX-License-Identifier: MIT
+<!-- SPDX-License-Identifier: MIT -->
 
 zram-generator.conf(5) -- Systemd unit generator for zram swap devices (configuration)
 ======================================================================================
@@ -55,24 +54,13 @@ Devices with the final size of *0* will be discarded.
 
   Defaults to *none*.
 
-  For compatibility with earlier versions, `memory-limit` is allowed as an alias for this option.
-  Its use is discouraged, and administrators should migrate to `host-memory-limit`.
+* `zram-size`=
 
-* `zram-fraction`=
+  Sets the size of the zram device as a function of *MemTotal*, available as the `ram` variable.
 
-  Defines the scaling factor of the zram device's size with relation to the total usable RAM.
+  Arithmetic operators (^%/\*-+), e, π, SI suffixes, log(), int(), ceil(), floor(), round(), abs(), min(), max(), and trigonometric functions are supported.
 
-  This takes a nonnegative floating-point number representing that factor.
-
-  Defaults to *0.5*.
-
-* `max-zram-size`=
-
-  Sets the limit on the zram device's size obtained by `zram-fraction`.
-
-  This takes a nonnegative number, representing that limit in megabytes, or the literal string *none*, which can be used to override a limit set earlier.
-
-  Defaults to *4096*.
+  Defaults to *min(ram / 2, 4096)*.
 
 * `compression-algorithm`=
 
@@ -82,6 +70,15 @@ Devices with the final size of *0* will be discarded.
   Consult */sys/block/zram0/comp_algorithm* for a list of currently loaded compression algorithms, but note that additional ones may be loaded on demand.
 
   If unset, none will be configured and the kernel's default will be used.
+
+* `writeback-device`=
+
+  Write incompressible pages, for which no gain was achieved, to the specified device under memory pressure.
+  This corresponds to the */sys/block/zramX/backing_dev* parameter.
+
+  Takes a path to a block device, like */dev/disk/by-partuuid/2d54ffa0-01* or */dev/zvol/tarta-zoot/swap-writeback*.
+
+  If unset, none is used, and incompressible pages are kept in RAM.
 
 * `swap-priority`=
 
@@ -104,6 +101,12 @@ Devices with the final size of *0* will be discarded.
 
   Also see systemd-makefs(8).
 
+* `options`=
+
+  Sets mount or swapon options. Availability depends on `fs-type`.
+
+  Defaults to *discard*.
+
 ## ENVIRONMENT VARIABLES
 
 Setting `ZRAM_GENERATOR_ROOT` during parsing will cause */proc/meminfo* to be read from *$ZRAM_GENERATOR_ROOT/proc/meminfo* instead,
@@ -113,7 +116,7 @@ and *{/usr/lib,/usr/local/lib,/etc,/run}/systemd/zram-generator.conf* to be read
 
 The default configuration will yield the following:
 
-     zram device size [MB]
+     zram device size
          ^
          │
       4G>│               ooooooooooooo
@@ -124,19 +127,69 @@ The default configuration will yield the following:
          │     o
          │   o
     512M>│ o
-         0───────────────────────> total usable RAM [MB]
+         0───────────────────────> total usable RAM
            ^     ^       ^
            1G    4G      8G
 
+A piecewise-linear size 1:1 for the first 4G, then 1:2 above, up to a max of 32G:<br />
+&nbsp;&nbsp;`zram-size = min(min(ram, 4096) + max(ram - 4096, 0) / 2, 32 * 1024)`
+
+     zram device size
+         ^
+     32G>|                                                oooooooooooooo
+         |                                            o
+     30G>|                                        o
+         |
+        /=/
+         |
+      8G>│                           o
+         │                       o
+         │                   o
+         │               o
+         │           o
+      4G>│       o
+         │     o
+         │   o
+      1G>│ o
+         0───────────────────────────────────||──────────────────────> total usable RAM
+           ^     ^       ^               ^        ^       ^       ^
+           1G    4G      8G             12G      56G     60G     64G
+
+
+
+## OBSOLETE OPTIONS
+
+* `memory-limit`=
+
+  Compatibility alias for `host-memory-limit`.
+
+* `zram-fraction`=
+
+  Defines the scaling factor of the zram device's size with relation to the total usable RAM.
+
+  This takes a nonnegative floating-point number representing that factor.
+
+  Defaulted to *0.5*. Setting this or `max-zram-size` overrides `zram-size`.
+
+* `max-zram-size`=
+
+  Sets the limit on the zram device's size obtained by `zram-fraction`.
+
+  This takes a nonnegative number, representing that limit in megabytes, or the literal string *none*, which can be used to override a limit set earlier.
+
+  Defaulted to *4096*. Setting this or `zram-fraction` overrides `zram-size`.
+
 ## REPORTING BUGS
 
-&lt;<https://github.com/systemd/zram-generator/issues>&gt;
+<https://github.com/systemd/zram-generator/issues>
 
 ## SEE ALSO
 
 zram-generator(8), systemd.syntax(5), proc(5)
 
-&lt;<https://github.com/systemd/zram-generator>&gt;
+<https://github.com/systemd/zram-generator>
 
-Linux documentation of zram: &lt;<https://kernel.org/doc/html/latest/admin-guide/blockdev/zram.html>&gt;<br />
-     and the zram sysfs ABI: &lt;<https://kernel.org/doc/Documentation/ABI/testing/sysfs-block-zram>&gt;
+Linux documentation of zram: <https://kernel.org/doc/html/latest/admin-guide/blockdev/zram.html><br />
+     and the zram sysfs ABI: <https://kernel.org/doc/Documentation/ABI/testing/sysfs-block-zram>
+
+`fasteval` documentation for the entire `zram-size` arithmetic DSL: <https://docs.rs/fasteval/0.2.4/fasteval/#the-fasteval-expression-mini-language>

@@ -6,7 +6,7 @@ use log::{debug, log, warn, Level};
 use std::cmp;
 use std::collections::BTreeSet;
 use std::fs;
-use std::io;
+use std::io::{self, Write};
 use std::os::unix::fs::symlink;
 use std::path::Path;
 use std::process::Command;
@@ -49,8 +49,7 @@ fn virtualization_container() -> Result<bool> {
 }
 
 fn modprobe(modname: &str, required: bool) {
-    let status = Command::new("modprobe").arg(modname).status();
-    match status {
+    match Command::new("modprobe").arg(modname).status() {
         Err(e) => {
             let level = match !required && e.kind() == io::ErrorKind::NotFound {
                 true => Level::Debug,
@@ -122,13 +121,10 @@ pub fn run_generator(devices: &[Device], output_directory: &Path, fake_mode: boo
         .collect();
 
     if !compressors.is_empty() {
-        let proc_crypto = match fs::read_to_string("/proc/crypto") {
-            Ok(string) => string,
-            Err(e) => {
-                warn!("Failed to read /proc/crypto, proceeding as if empty: {}", e);
-                String::from("")
-            }
-        };
+        let proc_crypto = fs::read_to_string("/proc/crypto").unwrap_or_else(|e| {
+            warn!("Failed to read /proc/crypto, proceeding as if empty: {}", e);
+            String::new()
+        });
         let known = parse_known_compressors(&proc_crypto);
 
         for comp in compressors.difference(&known) {
@@ -163,7 +159,7 @@ fn write_contents(output_directory: &Path, filename: &str, contents: &str) -> Re
         contents = contents
     );
 
-    fs::write(&path, contents).with_context(|| format!("Failed to write {:?}", path))
+    fs::write(&path, contents).with_context(|| format!("Failed to write {}", path.display()))
 }
 
 fn handle_device(output_directory: &Path, device: &Device) -> Result<()> {
@@ -172,6 +168,36 @@ fn handle_device(output_directory: &Path, device: &Device) -> Result<()> {
     } else {
         handle_zram_mount_point(output_directory, device)
     }
+}
+
+fn handle_zram_bindings(output_directory: &Path, device: &Device, specific: &str) -> Result<()> {
+    let wb_unit = device
+        .writeback_dev
+        .as_ref()
+        .map(|wd| unit_name_from_path(wd, ".device"))
+        .unwrap_or_default();
+
+    /* systemd-zram-setup@.service.
+     * We use the packaged unit, and only need to provide a small drop-in. */
+    write_contents(
+        output_directory,
+        &format!("systemd-zram-setup@{}.service.d/bindings.conf", device.name),
+        &format!(
+            "\
+[Unit]
+BindsTo={}{}{}{}{}
+",
+            specific,
+            &" "[device.writeback_dev.is_none() as usize..],
+            wb_unit,
+            device
+                .writeback_dev
+                .as_ref()
+                .map(|_| "\nAfter=")
+                .unwrap_or_default(),
+            wb_unit,
+        ),
+    )
 }
 
 fn handle_zram_swap(output_directory: &Path, device: &Device) -> Result<()> {
@@ -184,23 +210,9 @@ fn handle_zram_swap(output_directory: &Path, device: &Device) -> Result<()> {
         device.disksize / 1024 / 1024
     );
 
-    /* systemd-zram-setup@.service.
-     * We use the packaged unit, and only need to provide a small drop-in. */
-
-    write_contents(
-        output_directory,
-        &format!(
-            "systemd-zram-setup@{}.service.d/bindsto-swap.conf",
-            device.name
-        ),
-        "\
-[Unit]
-BindsTo=dev-%i.swap
-",
-    )?;
+    handle_zram_bindings(output_directory, device, "dev-%i.swap")?;
 
     /* dev-zramX.swap */
-
     write_contents(
         output_directory,
         &swap_name,
@@ -215,14 +227,15 @@ After=systemd-zram-setup@{zram_device}.service
 [Swap]
 What=/dev/{zram_device}
 Priority={swap_priority}
+Options={options}
 ",
             zram_device = device.name,
-            swap_priority = device.swap_priority
+            swap_priority = device.swap_priority,
+            options = device.options.replace('%', "%%"),
         ),
     )?;
 
     /* enablement symlink */
-
     let symlink_path = output_directory.join("swap.target.wants").join(&swap_name);
     let target_path = format!("../{}", swap_name);
     make_symlink(&target_path, &symlink_path)?;
@@ -230,12 +243,33 @@ Priority={swap_priority}
     Ok(())
 }
 
-fn mount_unit_name(path: &Path) -> String {
-    /* FIXME: handle full escaping */
+/// Path escaping as described in systemd.unit(5)
+///
+/// `/./` components stripped away when parsing `mount-point =`
+fn unit_name_from_path(path: &Path, suffix: &str) -> String {
     assert!(path.is_absolute());
 
-    let path = path.strip_prefix("/").unwrap().to_str().unwrap();
-    format!("{}.mount", path.replace("/", "-"))
+    let trimmed = path.to_str().unwrap().trim_matches('/');
+    if trimmed.is_empty() {
+        format!("-{}", suffix)
+    } else {
+        let mut obuf = Vec::with_capacity(path.as_os_str().len() + suffix.len());
+        let mut just_slash = false;
+        for (i, &b) in trimmed.as_bytes().iter().enumerate() {
+            if b == b'/' && just_slash {
+                continue;
+            }
+            just_slash = b == b'/';
+            match b {
+                b'/' => obuf.push(b'-'),
+                b'.' if i == 0 => write!(obuf, "\\x{:02x}", b'.').unwrap(),
+                b'0'..=b'9' | b'a'..=b'z' | b'A'..=b'Z' | b':' | b'_' | b'.' => obuf.push(b),
+                _ => write!(obuf, "\\x{:02x}", b).unwrap(),
+            }
+        }
+        obuf.extend_from_slice(suffix.as_bytes());
+        String::from_utf8(obuf).unwrap()
+    }
 }
 
 fn handle_zram_mount_point(output_directory: &Path, device: &Device) -> Result<()> {
@@ -244,7 +278,7 @@ fn handle_zram_mount_point(output_directory: &Path, device: &Device) -> Result<(
         return Ok(());
     }
 
-    let mount_name = &mount_unit_name(device.mount_point.as_ref().unwrap());
+    let mount_name = &unit_name_from_path(device.mount_point.as_ref().unwrap(), ".mount");
 
     debug!(
         "Creating unit file {} (/dev/{} with {}MB)",
@@ -253,27 +287,11 @@ fn handle_zram_mount_point(output_directory: &Path, device: &Device) -> Result<(
         device.disksize / 1024 / 1024
     );
 
-    /* systemd-zram-setup@.service.
-     * We use the packaged unit, and only need to provide a small drop-in. */
+    handle_zram_bindings(output_directory, device, mount_name)?;
 
     write_contents(
         output_directory,
-        &format!(
-            "systemd-zram-setup@{}.service.d/bindsto-mount.conf",
-            device.name
-        ),
-        &format!(
-            "\
-[Unit]
-BindsTo={}
-",
-            mount_name
-        ),
-    )?;
-
-    write_contents(
-        output_directory,
-        &mount_name,
+        mount_name,
         &format!(
             "\
 [Unit]
@@ -284,15 +302,16 @@ After=systemd-zram-setup@{zram_device}.service
 
 [Mount]
 What=/dev/{zram_device}
-Where={mount_point:?}
+Where={mount_point}
+Options={options}
 ",
             zram_device = device.name,
-            mount_point = device.mount_point.as_ref().unwrap(),
+            mount_point = device.mount_point.as_ref().unwrap().to_str().unwrap(),
+            options = device.options.replace('%', "%%"),
         ),
     )?;
 
     /* enablement symlink */
-
     let symlink_path = output_directory
         .join("local-fs.target.wants")
         .join(&mount_name);
@@ -348,7 +367,30 @@ selftest     : passed
 internal     : no
 type         : skcipher
 ";
-        let expected = vec!["zstd", "ccm(aes)", "ctr(aes)"];
+        let expected = ["zstd", "ccm(aes)", "ctr(aes)"];
         assert_eq!(parse_known_compressors(data), BTreeSet::from_iter(expected));
+    }
+
+    #[test]
+    fn test_unit_name_from_path() {
+        assert_eq!(
+            unit_name_from_path(&Path::new("/waldo"), ".mount"),
+            "waldo.mount"
+        );
+        assert_eq!(
+            unit_name_from_path(&Path::new("/waldo/quuix"), ".mount"),
+            "waldo-quuix.mount"
+        );
+        assert_eq!(
+            unit_name_from_path(&Path::new("/waldo/quuix/"), ".mount"),
+            "waldo-quuix.mount"
+        );
+        assert_eq!(
+            unit_name_from_path(&Path::new("/waldo/quuix//"), ".mount"),
+            "waldo-quuix.mount"
+        );
+        assert_eq!(unit_name_from_path(&Path::new("/"), ".mount"), "-.mount");
+        assert_eq!(unit_name_from_path(&Path::new("//"), ".mount"), "-.mount");
+        assert_eq!(unit_name_from_path(&Path::new("///"), ".mount"), "-.mount");
     }
 }
