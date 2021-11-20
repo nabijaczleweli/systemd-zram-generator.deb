@@ -21,6 +21,8 @@ systemd-zram (1.1.0-1) unstable; urgency=medium
      like for zram-fraction and max-zram-size, too:
      upgrade to host-memory-limit
 
+  4. The default options are now "discard", instead of empty
+
  -- наб <nabijaczleweli@nabijaczleweli.xyz>  Tue, 16 Nov 2021 22:27:39 +0100
 
 systemd-zram (0.2.0~beta.1-1) unstable; urgency=medium
