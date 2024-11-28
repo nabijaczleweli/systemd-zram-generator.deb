@@ -13,7 +13,7 @@ systemd-zram (1.1.0-1) unstable; urgency=medium
      The default value is unchanged at min(ram / 2, 4096).
 
   2. Upstream now also supports writeback-device,
-     correspoding to the backing_dev zram file,
+     corresponding to the backing_dev zram file,
      to which incompressible pages are written under memory pressure.
      It's unset by default.
 
