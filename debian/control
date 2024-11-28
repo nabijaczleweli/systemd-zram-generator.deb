@@ -11,7 +11,7 @@ Build-Depends: debhelper,
                debhelper-compat (= 13),
                cargo,
                pkgconf,
-               systemd,
+               systemd-dev,
                ronn (>= 0.9.0),
 #              ^ ronn before that fails with regex+locale related errors
                locales,
