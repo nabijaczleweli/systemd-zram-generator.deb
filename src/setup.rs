@@ -18,26 +18,82 @@ pub const SYSTEMD_MAKEFS_COMMAND: &str = concat!(
     ),
     "/systemd-makefs"
 );
+/// A constant string for use in clap --help output.
+#[rustfmt::skip]
+pub const AFTER_HELP: &str = concat!(
+    "Uses ", env!("SYSTEMD_UTIL_DIR"), "/systemd-makefs", "."
+);
 
 pub fn run_device_setup(device: Option<Device>, device_name: &str) -> Result<()> {
     let device = device.ok_or_else(|| anyhow!("Device {} not found", device_name))?;
 
     let device_sysfs_path = Path::new("/sys/block").join(device_name);
 
-    if let Some(ref compression_algorithm) = device.compression_algorithm {
-        let comp_algorithm_path = device_sysfs_path.join("comp_algorithm");
-        match fs::write(&comp_algorithm_path, &compression_algorithm) {
-            Ok(_) => {}
+    for (prio, (algo, params)) in device
+        .compression_algorithms
+        .compression_algorithms
+        .iter()
+        .enumerate()
+    {
+        let params = if params.is_empty() {
+            None
+        } else {
+            Some(params)
+        };
+        let (path, data, add_pathdata) = if prio == 0 {
+            (
+                device_sysfs_path.join("comp_algorithm"),
+                algo,
+                params.as_ref().map(|p| {
+                    (
+                        device_sysfs_path.join("algorithm_params"),
+                        format!("algo={} {}", algo, p),
+                    )
+                }),
+            )
+        } else {
+            (
+                device_sysfs_path.join("recomp_algorithm"),
+                &format!("algo={} priority={}", algo, prio),
+                params.as_ref().map(|p| {
+                    (
+                        device_sysfs_path.join("recompress"),
+                        format!("{} priority={}", p, prio),
+                    )
+                }),
+            )
+        };
+
+        match fs::write(&path, data) {
+            Ok(_) => {
+                if let Some((add_path, add_data)) = add_pathdata {
+                    match fs::write(add_path, add_data) {
+                        Ok(_) => {}
+                        Err(err) => {
+                            warn!(
+                                "Warning: algorithm {:?} supplemental data {:?} not written: {}",
+                                algo, data, err,
+                            );
+                        }
+                    }
+                }
+            }
             Err(err) if err.kind() == ErrorKind::InvalidInput => {
                 warn!(
                     "Warning: algorithm {:?} not recognised; consult {} for a list of available ones",
-                    compression_algorithm, comp_algorithm_path.display(),
+                    algo, path.display(),
+                );
+            }
+            Err(err) if err.kind() == ErrorKind::PermissionDenied && prio != 0 => {
+                warn!(
+                    "Warning: recompression algorithm {:?} requested but recompression not available ({} doesn't exist)",
+                    algo, path.display(),
                 );
             }
             err @ Err(_) => err.with_context(|| {
                 format!(
                     "Failed to configure compression algorithm into {}",
-                    comp_algorithm_path.display()
+                    path.display()
                 )
             })?,
         }
@@ -45,13 +101,25 @@ pub fn run_device_setup(device: Option<Device>, device_name: &str) -> Result<()>
 
     if let Some(ref wb_dev) = device.writeback_dev {
         let writeback_path = device_sysfs_path.join("backing_dev");
-        fs::write(&writeback_path, wb_dev.as_os_str().as_bytes()).with_context(|| {
-            format!(
-                "Failed to configure write-back device into {}",
-                writeback_path.display()
-            )
-        })?;
+        if writeback_path.exists() {
+            fs::write(&writeback_path, wb_dev.as_os_str().as_bytes()).with_context(|| {
+                format!(
+                    "Failed to configure write-back device into {}",
+                    writeback_path.display()
+                )
+            })?;
+        } else {
+            warn!("Warning: writeback-device={} set for {}, but system doesn't support write-back. Ignoring.", writeback_path.display(), device_name)
+        }
     }
+
+    let resident_memory = device_sysfs_path.join("mem_limit");
+    fs::write(&resident_memory, format!("{}", device.mem_limit)).with_context(|| {
+        format!(
+            "Failed to configure resident memory limit into {}",
+            resident_memory.display()
+        )
+    })?;
 
     let disksize_path = device_sysfs_path.join("disksize");
     fs::write(&disksize_path, format!("{}", device.disksize)).with_context(|| {

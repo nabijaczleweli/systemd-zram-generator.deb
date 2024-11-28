@@ -4,28 +4,57 @@ use zram_generator::{config, generator};
 
 use anyhow::Result;
 use fs_extra::dir::{copy, CopyOptions};
+use std::env;
+use std::ffi::OsString;
 use std::fs;
 use std::io::{self, Write};
+use std::os::unix::ffi::OsStringExt;
 use std::path::Path;
-use std::process::Command;
+use std::process::{exit, Command};
 use tempfile::TempDir;
 
 #[ctor::ctor]
 fn unshorn() {
-    use nix::{mount, sched, unistd};
+    use nix::{errno, mount, sched, unistd};
     use std::os::unix::fs::symlink;
 
     let (uid, gid) = (unistd::geteuid(), unistd::getegid());
-    sched::unshare(sched::CloneFlags::CLONE_NEWUSER | sched::CloneFlags::CLONE_NEWNS)
-        .expect("unshare(NEWUSER | NEWNS)");
-    fs::write("/proc/self/setgroups", b"deny").unwrap();
-    fs::write("/proc/self/uid_map", format!("0 {} 1", uid)).unwrap();
-    fs::write("/proc/self/gid_map", format!("0 {} 1", gid)).unwrap();
+    if !uid.is_root() {
+        match sched::unshare(sched::CloneFlags::CLONE_NEWUSER) {
+            Err(errno::Errno::EPERM) => {
+                eprintln!("unshare(NEWUSER) forbidden and not running as root: skipping tests");
+                exit(0);
+            }
+            r => r.expect("unshare(NEWUSER)"),
+        }
+        fs::write("/proc/self/setgroups", b"deny").unwrap();
+        fs::write("/proc/self/uid_map", format!("0 {} 1", uid)).unwrap();
+        fs::write("/proc/self/gid_map", format!("0 {} 1", gid)).unwrap();
+    }
+
+    sched::unshare(sched::CloneFlags::CLONE_NEWNS).expect("unshare(NEWNS)");
+    mount::mount::<_, _, str, str>(
+        Some("none"),
+        "/",
+        None,
+        mount::MsFlags::MS_REC | mount::MsFlags::MS_PRIVATE,
+        None,
+    )
+    .unwrap();
 
     mount::mount::<str, _, _, str>(None, "/proc", Some("tmpfs"), mount::MsFlags::empty(), None)
         .unwrap();
     fs::create_dir("/proc/self").unwrap();
     symlink("zram-generator", "/proc/self/exe").unwrap();
+
+    let mut path = env::var_os("PATH")
+        .map(|p| p.to_os_string().into_vec())
+        .unwrap_or(b"/usr/bin:/bin".to_vec()); // _PATH_DEFPATH
+    path.insert(0, b':');
+    for &b in "tests/10-example/bin".as_bytes().into_iter().rev() {
+        path.insert(0, b);
+    }
+    env::set_var("PATH", OsString::from_vec(path));
 }
 
 fn prepare_directory(srcroot: &Path) -> Result<TempDir> {
@@ -97,6 +126,9 @@ fn test_01_basic() {
     assert_eq!(d.host_memory_limit_mb, None);
     assert_eq!(d.zram_size.as_ref().map(z_s_name), None);
     assert_eq!(d.options, "discard");
+
+    assert_eq!(d.disksize, 391 * 1024 * 1024);
+    assert_eq!(d.mem_limit, 0);
 }
 
 #[test]
@@ -106,9 +138,18 @@ fn test_02_zstd() {
     let d = &devices[0];
     assert!(d.is_swap());
     assert_eq!(d.host_memory_limit_mb, Some(2050));
-    assert_eq!(d.zram_size.as_ref().map(z_s_name), Some("ram * 0.75"));
-    assert_eq!(d.compression_algorithm.as_ref().unwrap(), "zstd");
+    assert_eq!(d.zram_size.as_ref().map(z_s_name), Some("ram * ratio"));
+    assert_eq!(
+        d.compression_algorithms,
+        config::Algorithms {
+            compression_algorithms: vec![("zstd".into(), "".into())],
+            ..Default::default()
+        }
+    );
     assert_eq!(d.options, "discard");
+
+    assert_eq!(d.disksize, 782 * 1024 * 1024 * 3 / 4);
+    assert_eq!(d.mem_limit, 9999 * 1024 * 1024);
 }
 
 #[test]
@@ -130,11 +171,17 @@ fn test_04_dropins() {
                 assert_eq!(d.host_memory_limit_mb, Some(1235));
                 assert_eq!(d.zram_size.as_ref().map(z_s_name), None);
                 assert_eq!(d.options, "discard");
+
+                assert_eq!(d.disksize, 782 * 1024 * 1024 / 2);
+                assert_eq!(d.mem_limit, 0);
             }
             "zram2" => {
                 assert_eq!(d.host_memory_limit_mb, None);
                 assert_eq!(d.zram_size.as_ref().map(z_s_name), Some("ram*0.8"));
                 assert_eq!(d.options, "");
+
+                assert_eq!(d.disksize, 782 * 1024 * 1024 * 8 / 10);
+                assert_eq!(d.mem_limit, 0);
             }
             _ => panic!("Unexpected device {}", d),
         }
@@ -242,7 +289,13 @@ fn test_09_zram_size() {
         d.zram_size.as_ref().map(z_s_name),
         Some("min(0.75 * ram, 6000)")
     );
-    assert_eq!(d.compression_algorithm.as_ref().unwrap(), "zstd");
+    assert_eq!(
+        d.compression_algorithms,
+        config::Algorithms {
+            compression_algorithms: vec![("zstd".into(), "dictionary=/etc/gaming level=9".into())],
+            recompression_global: "recompargs".into()
+        }
+    );
 }
 
 #[test]
@@ -266,14 +319,37 @@ fn test_10_example() {
                     d.zram_size.as_ref().map(z_s_name),
                     Some("min(ram / 10, 2048)")
                 );
-                assert_eq!(d.compression_algorithm.as_deref(), Some("lzo-rle"));
+                assert_eq!(
+                    d.compression_algorithms,
+                    config::Algorithms {
+                        compression_algorithms: vec![
+                            ("lzo-rle".into(), "".into()),
+                            ("zstd".into(), "level=3".into())
+                        ],
+                        recompression_global: "type=idle".into(),
+                    }
+                );
                 assert_eq!(d.options, "");
+
+                assert_eq!(
+                    d.zram_resident_limit.as_ref().map(z_s_name),
+                    Some("maxhotplug * 3/4")
+                );
+
+                assert_eq!(d.disksize, 782 * 1024 * 1024 / 10);
+                // This is the combination of tests/10-example/bin/xenstore-read and
+                // zram-resident-limit= in tests/10-example/etc/systemd/zram-generator.conf.
+                assert_eq!(d.mem_limit, 8 * 1024 * 1024 * 1024 * 3 / 4);
             }
+
             "zram1" => {
                 assert_eq!(d.fs_type.as_ref().unwrap(), "ext2");
                 assert_eq!(d.effective_fs_type(), "ext2");
                 assert_eq!(d.zram_size.as_ref().map(z_s_name), Some("ram / 10"));
                 assert_eq!(d.options, "discard");
+
+                assert_eq!(d.disksize, 782 * 1024 * 1024 / 10);
+                assert_eq!(d.mem_limit, 0);
             }
             _ => panic!("Unexpected device {}", d),
         }

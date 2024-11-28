@@ -15,7 +15,7 @@ fn make_parent(of: &Path) -> Result<()> {
     let parent = of
         .parent()
         .ok_or_else(|| anyhow!("Couldn't get parent of {}", of.display()))?;
-    fs::create_dir_all(&parent)?;
+    fs::create_dir_all(parent)?;
     Ok(())
 }
 
@@ -117,7 +117,13 @@ pub fn run_generator(devices: &[Device], output_directory: &Path, fake_mode: boo
 
     let compressors: BTreeSet<_> = devices
         .iter()
-        .flat_map(|device| device.compression_algorithm.as_deref())
+        .flat_map(|device| {
+            device
+                .compression_algorithms
+                .compression_algorithms
+                .iter()
+                .map(|(a, _)| a.as_ref())
+        })
         .collect();
 
     if !compressors.is_empty() {
@@ -140,7 +146,6 @@ fn parse_known_compressors(proc_crypto: &str) -> BTreeSet<&str> {
     // Extract algorithm names (this includes non-compression algorithms too)
     proc_crypto
         .lines()
-        .into_iter()
         .filter(|line| line.starts_with("name"))
         .map(|m| m.rsplit(':').next().unwrap().trim())
         .collect()
@@ -212,6 +217,16 @@ fn handle_zram_swap(output_directory: &Path, device: &Device) -> Result<()> {
 
     handle_zram_bindings(output_directory, device, "dev-%i.swap")?;
 
+    let shutdown_conflicts = if device.writeback_dev.is_some() {
+        // We need to shut down the zram device to disconnect the writeback device.
+        // Once https://github.com/systemd/systemd/issues/35303 is resolved, we
+        // may revisit this and rely on the systemd to pull down the device stack
+        // if appropriate.
+        "Conflicts=shutdown.target\n"
+    } else {
+        ""
+    };
+
     /* dev-zramX.swap */
     write_contents(
         output_directory,
@@ -221,9 +236,13 @@ fn handle_zram_swap(output_directory: &Path, device: &Device) -> Result<()> {
 [Unit]
 Description=Compressed Swap on /dev/{zram_device}
 Documentation=man:zram-generator(8) man:zram-generator.conf(5)
+
+DefaultDependencies=no
+
 Requires=systemd-zram-setup@{zram_device}.service
 After=systemd-zram-setup@{zram_device}.service
-
+Before=swap.target
+{shutdown_conflicts}
 [Swap]
 What=/dev/{zram_device}
 Priority={swap_priority}
@@ -232,6 +251,7 @@ Options={options}
             zram_device = device.name,
             swap_priority = device.swap_priority,
             options = device.options.replace('%', "%%"),
+            shutdown_conflicts = shutdown_conflicts,
         ),
     )?;
 
@@ -314,7 +334,7 @@ Options={options}
     /* enablement symlink */
     let symlink_path = output_directory
         .join("local-fs.target.wants")
-        .join(&mount_name);
+        .join(mount_name);
     let target_path = format!("../{}", mount_name);
     make_symlink(&target_path, &symlink_path)?;
 
