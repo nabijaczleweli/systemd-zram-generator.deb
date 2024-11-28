@@ -1,3 +1,16 @@
+systemd-zram (1.2.1-1) unstable; urgency=medium
+
+  * d/NOTE: also note that the default is discard now
+  * Fix dropped endash in d/z-g.conf
+  * d/watch: update to work with modern github
+  * New upstream version 1.2.1
+    + Rebase patches
+    + Rebase default config
+  * Standards-Version: 4.7.0 (routine-update)
+  * Replace transitional package pkg-config by pkgconf in Build-Depends
+
+ -- наб <nabijaczleweli@nabijaczleweli.xyz>  Thu, 28 Nov 2024 16:52:58 +0100
+
 systemd-zram (1.1.0-1) unstable; urgency=medium
 
   * New upstream version 1.1.0
