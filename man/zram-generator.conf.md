@@ -42,7 +42,7 @@ This option thus has higher priority than the configuration files.
 
 ## OPTIONS
 
-Each device is configured independently in its `[zramN]` section, where N is a nonnegative integer. Other sections are ignored.
+Each device is configured independently in its `[zramN]` section, where N is a nonnegative integer. The global section may contain [DIRECTIVES]. Other sections are ignored.
 
 Devices with the final size of *0* will be discarded.
 
@@ -57,19 +57,30 @@ Devices with the final size of *0* will be discarded.
 * `zram-size`=
 
   Sets the size of the zram device as a function of *MemTotal*, available as the `ram` variable.
+  Additional variables may be provided by [DIRECTIVES].
 
   Arithmetic operators (^%/\*-+), e, π, SI suffixes, log(), int(), ceil(), floor(), round(), abs(), min(), max(), and trigonometric functions are supported.
 
   Defaults to *min(ram / 2, 4096)*.
 
+* `zram-resident-limit`=
+
+  Sets the maximum resident memory limit of the zram device (or *0* for no limit) as a function of *MemTotal*, available as the `ram` variable.
+
+  Same format as `zram-size`. Defaults to *0*.
+
 * `compression-algorithm`=
 
   Specifies the algorithm used to compress the zram device.
 
-  This takes a literal string, representing the algorithm to use.<br />
-  Consult */sys/block/zram0/comp_algorithm* for a list of currently loaded compression algorithms, but note that additional ones may be loaded on demand.
+  This takes a whitespace-separated list string, representing the algorithms to use, and parameters in parenteses.<br />
+  Consult */sys/block/zram0/comp_algorithm* (and *.../recomp_algorithm*) for a list of currently loaded compression algorithms, but note that additional ones may be loaded on demand.
 
-  If unset, none will be configured and the kernel's default will be used.
+  If unset, none will be configured and the kernel's default will be used.<br />
+  If more than one is given, and recompression is enabled in the kernel, subsequent ones will be set as the recompression algorithms, with decreasing priority.
+
+  If a compression algorithm is suffixed with a parenthesised comma-separated list of parameters, those are given to `.../algorithm_params` (and `.../recompress`).
+  A parenthesised parameter list *without* a compression algorithm is set as the global recompression parameters.
 
 * `writeback-device`=
 
@@ -106,6 +117,17 @@ Devices with the final size of *0* will be discarded.
   Sets mount or swapon options. Availability depends on `fs-type`.
 
   Defaults to *discard*.
+
+## DIRECTIVES
+
+The global section (before any section header) may contain directives in the following form:
+
+* `set!`*variable*=*program*
+
+  *program* is executed by the shell as-if by system(3),
+  its standard output stream parsed as an arithmetic expression (like `zram-size`/`zram-resident-limit`),
+  then the result is remembered into *variable*,
+  usable in later `set!`s and `zram-size`s/`zram-resident-limit`s.
 
 ## ENVIRONMENT VARIABLES
 

@@ -51,10 +51,27 @@ section must exist.
 ```ini
 # /etc/systemd/zram-generator.conf
 [zram1]
-mount-point = /var/tmp
+mount-point = /var/compressed
 ```
 
-This will set up a /dev/zram1 with ext2 and generate a mount unit for /var/tmp.
+This will set up a /dev/zram1 with ext2 and generate a mount unit for /var/compressed.
+
+In case you want this path to be user-writable, since util-linux v2.39 you can use
+```ini
+[zram1]
+options = X-mount.mode=1777
+```
+(and/or the relevant `X.mount.{owner,group}=` arguments, cf. mount(8)).
+
+Otherwise, you can use the following "high-quality hack":
+for the above example, create an
+override for `systemd-zram-setup@zram1.service`, for example with `systemctl edit`,
+containing the following (note the sticky bit as required for [/var]/tmp):
+
+```ini
+[Service]
+ExecStartPost=/bin/sh -c 'd=$(mktemp -d); mount "$1" "$d"; chmod 1777 "$d"; umount "$d"; rmdir "$d"' _ /dev/%i
+```
 
 ### Rust
 
@@ -69,12 +86,14 @@ It is recommended to use an existing package:
 * Debian: packages provided by nabijaczleweli, see https://debian.nabijaczleweli.xyz/README.
 * Arch: `sudo pacman -S zram-generator` (or https://aur.archlinux.org/packages/zram-generator-git/ for the latest git commit)
 
-To install directly from sources, execute `make build && sudo make install`:
+To install directly from sources, execute `make build && sudo make install NOBUILD=true`:
 * `zram-generator` binary is installed in the systemd system generator directory (usually `/usr/lib/systemd/system-generators/`)
 * `zram-generator(8)` and `zram-generator.conf(5)` manpages are installed into `/usr/share/man/manN/`, this requires [`ronn`](https://github.com/apjanke/ronn-ng).
 * `units/systemd-zram-setup@.service` is copied into the systemd system unit directory (usually `/usr/lib/systemd/system/`)
 * `zram-generator.conf.example` is copied into `/usr/share/doc/zram-generator/`
 You need though create your own config file at one of the locations listed above.
+
+To install and configure with puppet [puppet-zram_generator](https://github.com/voxpupuli/puppet-zram_generator) is available.
 
 #### tl;dr
 
@@ -99,6 +118,6 @@ can be substituted for a non-standard location of the binary for testing.
 
 ### Authors
 
-Written by Zbigniew Jędrzejewski-Szmek <zbyszek@in.waw.pl>,
-Igor Raits <i.gnatenko.brain@gmail.com>, наб <nabijaczleweli@gmail.com>, and others.
+Written by Zbigniew Jędrzejewski-Szmek &lt;<zbyszek@in.waw.pl>&gt;,
+Igor Raits &lt;<i.gnatenko.brain@gmail.com>&gt;, наб &lt;<nabijaczleweli@nabijaczleweli.xyz>&gt;, and others.
 See https://github.com/systemd/zram-generator/graphs/contributors for the full list.

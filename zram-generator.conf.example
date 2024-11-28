@@ -1,6 +1,12 @@
 # This file is part of the zram-generator project
 # https://github.com/systemd/zram-generator
 
+# At the top level, a set!variable = program
+# directive executes /bin/sh -c program,
+# parses the output as an expression, and remembers it in variable,
+# usable in later set! and zram-size/zram-resident-limit.
+set!maxhotplug = xenstore-read /local/domain/$(xenstore-read domid)/memory/hotplug-max
+
 [zram0]
 # This section describes the settings for /dev/zram0.
 #
@@ -19,9 +25,23 @@ host-memory-limit = 9048
 # The default is "min(ram / 2, 4096)".
 zram-size = min(ram / 10, 2048)
 
+# The maximum memory resident for this zram device, as a function of MemTotal,
+# both in MB.
+# For example, if the machine has 1 GiB, and zram-resident-limit=ram/8,
+# then this device will not consume more than 128 MiB.
+#
+# 0 means no limit; this is the default.
+zram-resident-limit = maxhotplug * 3/4
+
 # The compression algorithm to use for the zram device,
 # or leave unspecified to keep the kernel default.
-compression-algorithm = lzo-rle
+#
+# Subsequent algorithms are used for recompression.
+# Comma-separated parameters may be specified in parentheses.
+#
+# Parameters without a compression algorithm are set as
+# global recompression parameters.
+compression-algorithm = lzo-rle zstd(level=3) (type=idle)
 
 # By default, file systems and swap areas are trimmed on-the-go
 # by setting "discard".

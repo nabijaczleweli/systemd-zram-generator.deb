@@ -3,16 +3,19 @@
 use anyhow::{anyhow, Context, Result};
 use fasteval::Evaler;
 use ini::Ini;
-use liboverdrop::FragmentScanner;
 use log::{info, warn};
 use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap};
+use std::ffi::OsString;
 use std::fmt;
 use std::fs;
 use std::io::{prelude::*, BufReader};
+use std::os::unix::process::ExitStatusExt;
 use std::path::{Component, Path, PathBuf};
+use std::process::{Command, Stdio};
 
 const DEFAULT_ZRAM_SIZE: &str = "min(ram / 2, 4096)";
+const DEFAULT_RESIDENT_LIMIT: &str = "0";
 
 pub struct Device {
     pub name: String,
@@ -21,9 +24,13 @@ pub struct Device {
 
     /// Default: `DEFAULT_ZRAM_SIZE`
     pub zram_size: Option<(String, fasteval::ExpressionI, fasteval::Slab)>,
-    pub compression_algorithm: Option<String>,
+    pub compression_algorithms: Algorithms,
     pub writeback_dev: Option<PathBuf>,
     pub disksize: u64,
+
+    /// /sys/block/zramX/mem_limit; default: `DEFAULT_RESIDENT_LIMIT`
+    pub zram_resident_limit: Option<(String, fasteval::ExpressionI, fasteval::Slab)>,
+    pub mem_limit: u64,
 
     pub swap_priority: i32,
     /// when set, a mount unit will be created
@@ -45,9 +52,11 @@ impl Device {
             name,
             host_memory_limit_mb: None,
             zram_size: None,
-            compression_algorithm: None,
+            compression_algorithms: Default::default(),
             writeback_dev: None,
             disksize: 0,
+            zram_resident_limit: None,
+            mem_limit: 0,
             swap_priority: 100,
             mount_point: None,
             fs_type: None,
@@ -87,35 +96,57 @@ impl Device {
         }
     }
 
-    fn set_disksize_if_enabled(&mut self, memtotal_mb: u64) -> Result<()> {
-        if !self.is_enabled(memtotal_mb) {
+    fn process_size(
+        &self,
+        zram_option: &Option<(String, fasteval::ExpressionI, fasteval::Slab)>,
+        ctx: &mut EvalContext,
+        default_size: f64,
+        label: &str,
+    ) -> Result<u64> {
+        Ok((match zram_option {
+            Some(zs) => {
+                zs.1.from(&zs.2.ps)
+                    .eval(&zs.2, ctx)
+                    .with_context(|| format!("{} {}", self.name, label))
+                    .and_then(|f| {
+                        if f >= 0. {
+                            Ok(f)
+                        } else {
+                            Err(anyhow!("{}: {}={} < 0", self.name, label, f))
+                        }
+                    })?
+            }
+            None => default_size,
+        } * 1024.0
+            * 1024.0) as u64)
+    }
+
+    fn set_disksize_if_enabled(&mut self, ctx: &mut EvalContext) -> Result<()> {
+        if !self.is_enabled(ctx.memtotal_mb) {
             return Ok(());
         }
 
         if self.zram_fraction.is_some() || self.max_zram_size_mb.is_some() {
             // deprecated path
             let max_mb = self.max_zram_size_mb.unwrap_or(None).unwrap_or(u64::MAX);
-            self.disksize = ((self.zram_fraction.unwrap_or(0.5) * memtotal_mb as f64) as u64)
+            self.disksize = ((self.zram_fraction.unwrap_or(0.5) * ctx.memtotal_mb as f64) as u64)
                 .min(max_mb)
                 * (1024 * 1024);
         } else {
-            self.disksize = (match self.zram_size.as_ref() {
-                Some(zs) => {
-                    zs.1.from(&zs.2.ps)
-                        .eval(&zs.2, &mut RamNs(memtotal_mb as f64))
-                        .with_context(|| format!("{} zram-size", self.name))
-                        .and_then(|f| {
-                            if f >= 0. {
-                                Ok(f)
-                            } else {
-                                Err(anyhow!("{}: zram-size={} < 0", self.name, f))
-                            }
-                        })?
-                }
-                None => (memtotal_mb as f64 / 2.).min(4096.), // DEFAULT_ZRAM_SIZE
-            } * 1024.
-                * 1024.) as u64;
+            self.disksize = self.process_size(
+                &self.zram_size,
+                ctx,
+                (ctx.memtotal_mb as f64 / 2.).min(4096.), // DEFAULT_ZRAM_SIZE
+                "zram-size",
+            )?;
         }
+
+        self.mem_limit = self.process_size(
+            &self.zram_resident_limit,
+            ctx,
+            0., // DEFAULT_RESIDENT_LIMIT
+            "zram-resident-limit",
+        )?;
 
         Ok(())
     }
@@ -125,14 +156,18 @@ impl fmt::Display for Device {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "{}: host-memory-limit={} zram-size={} compression-algorithm={} writeback-device={} options={}",
+            "{}: host-memory-limit={} zram-size={} zram-resident-limit={} compression-algorithm={} writeback-device={} options={}",
             self.name,
             OptMB(self.host_memory_limit_mb),
             self.zram_size
                 .as_ref()
                 .map(|zs| &zs.0[..])
                 .unwrap_or(DEFAULT_ZRAM_SIZE),
-            self.compression_algorithm.as_deref().unwrap_or("<default>"),
+            self.zram_resident_limit
+                .as_ref()
+                .map(|zs| &zs.0[..])
+                .unwrap_or(DEFAULT_RESIDENT_LIMIT),
+            self.compression_algorithms,
             self.writeback_dev.as_deref().unwrap_or_else(|| Path::new("<none>")).display(),
             self.options
         )?;
@@ -163,13 +198,48 @@ impl fmt::Display for OptMB {
     }
 }
 
-struct RamNs(f64);
-impl fasteval::EvalNamespace for RamNs {
+#[derive(Default, Debug, PartialEq, Eq)]
+pub struct Algorithms {
+    pub compression_algorithms: Vec<(String, String)>, // algorithm, params; first one is real compression, later ones are recompression
+    pub recompression_global: String,                  // params
+}
+impl fmt::Display for Algorithms {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self.compression_algorithms[..] {
+            [] => f.write_str("<default>")?,
+            [(first, firstparams), more @ ..] => {
+                f.write_str(first)?;
+                if !firstparams.is_empty() {
+                    write!(f, " ({})", firstparams)?;
+                }
+                for (algo, params) in more {
+                    write!(f, " then {}", algo)?;
+                    if !params.is_empty() {
+                        write!(f, " ({})", params)?;
+                    }
+                }
+            }
+        }
+        if !self.recompression_global.is_empty() {
+            write!(f, "(global recompress: {})", self.recompression_global)?;
+        }
+        Ok(())
+    }
+}
+
+struct EvalContext {
+    memtotal_mb: u64,
+    additional: BTreeMap<String, f64>,
+}
+
+impl fasteval::EvalNamespace for EvalContext {
     fn lookup(&mut self, name: &str, args: Vec<f64>, _: &mut String) -> Option<f64> {
-        if name == "ram" && args.is_empty() {
-            Some(self.0)
-        } else {
+        if !args.is_empty() {
             None
+        } else if name == "ram" {
+            Some(self.memtotal_mb as f64)
+        } else {
+            self.additional.get(name).copied()
         }
     }
 }
@@ -190,6 +260,57 @@ pub fn read_all_devices(root: &Path, kernel_override: bool) -> Result<Vec<Device
         .collect())
 }
 
+fn toplevel_line(
+    path: &Path,
+    k: &str,
+    val: &str,
+    slab: &mut fasteval::Slab,
+    ctx: &mut EvalContext,
+) -> Result<()> {
+    let (op, arg) = if let Some(colon) = k.find('!') {
+        k.split_at(colon + 1)
+    } else {
+        warn!(
+            "{}: invalid outside-of-section key {}, ignoring.",
+            path.display(),
+            k
+        );
+        return Ok(());
+    };
+
+    match op {
+        "set!" => {
+            let out = Command::new("/bin/sh")
+                .args(["-c", "--", val])
+                .stdin(Stdio::null())
+                .stderr(Stdio::inherit())
+                .output()
+                .with_context(|| format!("{}: {}: {}", path.display(), k, val))?;
+            let exit = out
+                .status
+                .code()
+                .unwrap_or_else(|| 128 + out.status.signal().unwrap());
+            if exit != 0 {
+                warn!("{}: {} exited {}", k, val, exit);
+            }
+
+            let expr = String::from_utf8(out.stdout)
+                .with_context(|| format!("{}: {}: {}", path.display(), k, val))?;
+            let evalled = fasteval::Parser::new()
+                .parse(&expr, &mut slab.ps)
+                .and_then(|p| p.from(&slab.ps).eval(slab, ctx))
+                .with_context(|| format!("{}: {}: {}: {}", path.display(), k, val, expr))?;
+            ctx.additional.insert(arg.to_string(), evalled);
+        }
+        _ => warn!(
+            "{}: unknown outside-of-section operation {}, ignoring.",
+            path.display(),
+            op
+        ),
+    }
+    Ok(())
+}
+
 fn read_devices(
     root: &Path,
     kernel_override: bool,
@@ -202,6 +323,11 @@ fn read_devices(
     }
 
     let mut devices: HashMap<String, Device> = HashMap::new();
+    let mut slab = fasteval::Slab::new();
+    let mut ctx = EvalContext {
+        memtotal_mb,
+        additional: BTreeMap::new(),
+    };
 
     for (_, path) in fragments {
         let ini = Ini::load_from_file(&path)?;
@@ -209,11 +335,9 @@ fn read_devices(
         for (sname, props) in ini.iter() {
             let sname = match sname {
                 None => {
-                    warn!(
-                        "{}: ignoring settings outside of section: {:?}",
-                        path.display(),
-                        props
-                    );
+                    for (k, v) in props.iter() {
+                        toplevel_line(&path, k, v, &mut slab, &mut ctx)?;
+                    }
                     continue;
                 }
                 Some(sname) if sname.starts_with("zram") && sname[4..].parse::<u64>().is_ok() => {
@@ -242,41 +366,35 @@ fn read_devices(
     }
 
     for dev in devices.values_mut() {
-        dev.set_disksize_if_enabled(memtotal_mb)?;
+        dev.set_disksize_if_enabled(&mut ctx)?;
     }
 
     Ok(devices)
 }
 
-fn locate_fragments(root: &Path) -> BTreeMap<String, PathBuf> {
-    let base_dirs = vec![
-        String::from(root.join("usr/lib").to_str().unwrap()),
-        String::from(root.join("usr/local/lib").to_str().unwrap()),
-        String::from(root.join("etc").to_str().unwrap()),
-        String::from(root.join("run").to_str().unwrap()), // We look at /run to allow temporary overriding
-                                                          // of configuration. There is no expectation of
-                                                          // programatic creation of config there.
+fn locate_fragments(root: &Path) -> BTreeMap<OsString, PathBuf> {
+    let base_dirs = [
+        root.join("usr/lib"),
+        root.join("usr/local/lib"),
+        root.join("etc"),
+        root.join("run"), // We look at /run to allow temporary overriding
+                          // of configuration. There is no expectation of
+                          // programatic creation of config there.
     ];
 
-    let cfg = FragmentScanner::new(
-        base_dirs.clone(),
-        "systemd/zram-generator.conf.d",
-        true,
-        vec![String::from("conf")],
-    );
+    let mut fragments =
+        liboverdrop::scan(&base_dirs, "systemd/zram-generator.conf.d", &["conf"], true);
 
-    let mut fragments = cfg.scan();
     if let Some(path) = base_dirs
         .into_iter()
         .rev()
-        .map(PathBuf::from)
         .map(|mut p| {
             p.push("systemd/zram-generator.conf");
             p
         })
         .find(|p| p.exists())
     {
-        fragments.insert(String::new(), path); // The empty string shall sort earliest
+        fragments.insert(OsString::new(), path); // The empty string shall sort earliest
     }
     fragments
 }
@@ -318,6 +436,34 @@ fn verify_mount_point(key: &str, val: &str) -> Result<PathBuf> {
     Ok(path.components().collect()) // normalise away /./ components
 }
 
+fn parse_size_expr(
+    dev: &Device,
+    key: &str,
+    value: &str,
+) -> Result<(String, fasteval::ExpressionI, fasteval::Slab)> {
+    let mut sl = fasteval::Slab::new();
+    Ok((
+        value.to_string(),
+        fasteval::Parser::new()
+            .parse_noclear(value, &mut sl.ps)
+            .with_context(|| format!("{} {}", key, dev.name))?,
+        sl,
+    ))
+}
+
+fn parse_compression_algorithm_params(whole: &str) -> (String, String) {
+    if let Some(paren) = whole.find('(') {
+        let (algo, mut params) = whole.split_at(paren);
+        params = &params[1..];
+        if params.ends_with(')') {
+            params = &params[..params.len() - 1];
+        }
+        (algo.to_string(), params.replace(',', " "))
+    } else {
+        (whole.to_string(), String::new())
+    }
+}
+
 fn parse_line(dev: &mut Device, key: &str, value: &str) -> Result<()> {
     match key {
         "host-memory-limit" | "memory-limit" => {
@@ -326,18 +472,26 @@ fn parse_line(dev: &mut Device, key: &str, value: &str) -> Result<()> {
         }
 
         "zram-size" => {
-            let mut sl = fasteval::Slab::new();
-            dev.zram_size = Some((
-                value.to_string(),
-                fasteval::Parser::new()
-                    .parse_noclear(value, &mut sl.ps)
-                    .with_context(|| format!("{} zram-size", dev.name))?,
-                sl,
-            ));
+            dev.zram_size = Some(parse_size_expr(dev, key, value)?);
+        }
+
+        "zram-resident-limit" => {
+            dev.zram_resident_limit = Some(parse_size_expr(dev, key, value)?);
         }
 
         "compression-algorithm" => {
-            dev.compression_algorithm = Some(value.to_string());
+            dev.compression_algorithms =
+                value
+                    .split_whitespace()
+                    .fold(Default::default(), |mut algos, s| {
+                        let (algo, params) = parse_compression_algorithm_params(s);
+                        if algo.is_empty() {
+                            algos.recompression_global = params;
+                        } else {
+                            algos.compression_algorithms.push((algo, params));
+                        }
+                        algos
+                    });
         }
 
         "writeback-device" => {
@@ -393,7 +547,7 @@ fn parse_line(dev: &mut Device, key: &str, value: &str) -> Result<()> {
 
 fn _get_total_memory_kb(path: &Path) -> Result<u64> {
     for line in
-        BufReader::new(fs::File::open(&path).with_context(|| {
+        BufReader::new(fs::File::open(path).with_context(|| {
             format!("Failed to read memory information from {}", path.display())
         })?)
         .lines()
@@ -532,7 +686,11 @@ foo=0
             parse_line(&mut dev, "zram-size", val).unwrap();
         }
         assert!(dev.is_enabled(memtotal_mb));
-        dev.set_disksize_if_enabled(memtotal_mb).unwrap();
+        dev.set_disksize_if_enabled(&mut EvalContext {
+            memtotal_mb,
+            additional: vec![("two".to_string(), 2.)].into_iter().collect(),
+        })
+        .unwrap();
         dev.disksize
     }
 
@@ -541,6 +699,38 @@ foo=0
         assert_eq!(
             dev_with_zram_size_size(Some("0.5 * ram"), 100),
             50 * 1024 * 1024
+        );
+    }
+
+    #[test]
+    fn test_eval_size_expression_with_additional() {
+        assert_eq!(
+            dev_with_zram_size_size(Some("0.5 * ram * two"), 100),
+            50 * 2 * 1024 * 1024
+        );
+    }
+
+    #[test]
+    fn test_eval_size_expression_500() {
+        assert_eq!(
+            dev_with_zram_size_size(Some("500"), 5000),
+            500 * 1024 * 1024
+        );
+    }
+
+    #[test]
+    fn test_eval_size_expression_500k() {
+        assert_eq!(
+            dev_with_zram_size_size(Some("500k"), 5000),
+            500 * 1000 * 1024 * 1024
+        );
+    }
+
+    #[test]
+    fn test_eval_size_expression_32g() {
+        assert_eq!(
+            dev_with_zram_size_size(Some("32G"), 5000),
+            32 * 1000_000_000 * 1024 * 1024
         );
     }
 
