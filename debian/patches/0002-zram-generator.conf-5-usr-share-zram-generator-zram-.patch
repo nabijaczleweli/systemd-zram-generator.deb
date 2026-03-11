@@ -1,0 +1,23 @@
+From: =?utf-8?b?0L3QsNCx?= <nabijaczleweli@nabijaczleweli.xyz>
+Date: Wed, 11 Mar 2026 14:54:31 +0100
+Subject: zram-generator.conf(5)
+ /usr/share/zram-generator/zram-generator.conf.example ->
+ /usr/share/doc/zram-generator/zram-generator.conf
+
+---
+ man/zram-generator.conf.md | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git man/zram-generator.conf.md man/zram-generator.conf.md
+index c3fc7d4..4ed495d 100644
+--- man/zram-generator.conf.md
++++ man/zram-generator.conf.md
+@@ -21,7 +21,7 @@ These files configure devices created by zram-generator(8). See systemd.syntax(5
+ 
+ ## CONFIGURATION DIRECTORIES AND PRECEDENCE
+ 
+-The default configuration doesn't specify any devices. Consult */usr/share/zram-generator/zram-generator.conf.example* for an example configuration file.
++The default configuration doesn't specify any devices. Consult */usr/share/doc/zram-generator/zram-generator.conf* for an example configuration file.
+ 
+ When packages need to customize the configuration, they can install configuration snippets in */usr/lib/systemd/zram-generator.conf.d/*.
+ Files in */etc/* are reserved for the local administrator, who may use this logic to override the configuration files installed by vendor packages.
